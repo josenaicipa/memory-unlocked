@@ -24,7 +24,7 @@ The atomic unit. One memory = one durable fact.
 ### Example
 
 ```yaml
-id: mem_0001
+id: mem_<uuid>
 namespace: { tenant: acme, project: billing }
 title: Refunds run through the async queue
 body: >

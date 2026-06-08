@@ -50,6 +50,38 @@ def test_rejects_secret_in_title(store):
     assert exc.value.reason == "secret_detected"
 
 
+@pytest.mark.parametrize(
+    "field, value",
+    [
+        ("source", "password=supersecretvalue"),
+        ("source_note", "api_key=supersecretvalue"),
+        ("tag", "access_token=supersecretvalue"),
+    ],
+)
+def test_rejects_secrets_in_all_model_controlled_fields(store, field, value):
+
+    source = Source(kind="doc", ref="docs/example.md")
+    tags = []
+    if field == "source":
+        source = Source(kind="doc", ref=value)
+    elif field == "source_note":
+        source = Source(kind="doc", ref="docs/example.md", note=value)
+    elif field == "tag":
+        tags = [value]
+
+    mem = Memory(
+        namespace=NS,
+        title="harmless title",
+        body="a perfectly fine body about architecture",
+        source=source,
+        tags=tags,
+    )
+    with pytest.raises(PolicyError) as exc:
+        store.add(mem)
+    assert exc.value.reason == "secret_detected"
+    assert list(store.all()) == []
+
+
 def test_rejection_emits_audit_event_without_secret(store):
     mem = Memory(
         namespace=NS,
@@ -83,7 +115,7 @@ def test_clean_memory_passes(store):
         tags=["billing", "Billing", "architecture"],
     )
     stored = store.add(mem)
-    assert stored.id == "mem_0001"
+    assert stored.id and stored.id.startswith("mem_")
     assert stored.created_at is not None
     # Tags were normalized (lowercased + de-duplicated).
     assert stored.tags == ["billing", "architecture"]

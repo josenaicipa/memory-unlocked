@@ -7,7 +7,7 @@ and only ranks/renders what comes back.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import List
+from typing import List, Optional
 
 from .models import Memory, Namespace
 from .store import MemoryStore
@@ -41,9 +41,9 @@ class ContextAssembler:
         )
         return scored[: self._config.max_memories]
 
-    def assemble(self, namespace: Namespace, query: str = "") -> str:
+    def assemble(self, namespace: Namespace, query: str = "", selected: Optional[List[Memory]] = None) -> str:
         """Render a context block string for the given scope and query."""
-        selected = self.select(namespace, query)
+        selected = self.select(namespace, query) if selected is None else selected
         if not selected:
             return ""
 

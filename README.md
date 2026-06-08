@@ -1,12 +1,19 @@
 # Memory Unlocked
 
-A **privacy-first, scoped memory fabric** for AI agents. Memory Unlocked is an
-open-source skeleton you can use to give your agents durable, project-scoped
-memory without leaking secrets or letting one project's context bleed into
-another.
+A **privacy-first, scoped memory fabric** for AI agents. Memory Unlocked gives
+agents durable, project-scoped memory without leaking secrets or letting one
+project's context bleed into another.
 
-It is deliberately small and dependency-free at the core, so you can read the
-whole thing, understand it, and adapt it to your stack.
+It is installable today as a dependency-free Python package with:
+
+- a durable local JSONL store,
+- a practical CLI (`memory-unlocked`),
+- a dependency-free MCP stdio server (`memory-unlocked-mcp`),
+- audit events for writes, recalls, and rejections,
+- tests and CI for the privacy/scope guarantees.
+
+The core stays deliberately small so teams can audit it, ship it locally, and
+adapt it to their own database, vector index, or hosted service later.
 
 ---
 
@@ -38,8 +45,33 @@ scope before anything reaches the model.
 ## Quickstart
 
 ```bash
-# clone, then from the repo root:
-python -m pytest -q          # run the test suite (no external deps required)
+git clone https://github.com/josenaicipa/memory-unlocked.git
+cd memory-unlocked
+python -m pip install -e '.[dev]'
+python -m pytest -q
+```
+
+Write and recall a memory from the CLI:
+
+```bash
+memory-unlocked --path ./mem init
+memory-unlocked --path ./mem write \
+  --tenant acme --project billing \
+  --title "Refunds run through the async queue" \
+  --body "Refund requests are enqueued and processed by a worker, not inline." \
+  --source docs/refunds.md \
+  --tags billing,architecture
+memory-unlocked --path ./mem recall \
+  --tenant acme --project billing --query refund
+```
+
+Run the MCP server for an agent runner:
+
+```bash
+MEMORY_UNLOCKED_TENANT=acme \
+MEMORY_UNLOCKED_PROJECT=billing \
+MEMORY_UNLOCKED_HOME="$HOME/.memory_unlocked" \
+  memory-unlocked-mcp
 ```
 
 Use the core package directly:
@@ -111,6 +143,8 @@ These are the defaults, not opt-ins:
 
 ## Documentation
 
+- [Install & CLI](docs/install.md) — package install, local JSONL store, CLI commands.
+- [Hermes / MCP](docs/hermes.md) — run the MCP server and bind it to a project scope.
 - [Architecture](docs/architecture.md) — components, data flow, scope policy.
 - [Privacy & redaction](docs/privacy-and-redaction.md) — what never to store and
   the write-review flow.

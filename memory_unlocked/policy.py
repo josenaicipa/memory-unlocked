@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import List, Pattern
+from typing import Iterable, List, Pattern
 
 from .models import Memory
 
@@ -61,6 +61,25 @@ def _scan_for_secret(text: str) -> str | None:
     return None
 
 
+def secret_reason(text: str) -> str | None:
+    """Public helper for transports/audit logs that must avoid persisting secrets."""
+    return _scan_for_secret(text or "")
+
+
+def redact_if_secret(text: str) -> str:
+    """Return a safe placeholder if ``text`` looks like a credential."""
+    return "[REDACTED_SECRET]" if secret_reason(text) else (text or "")
+
+
+def _model_controlled_text(memory: Memory) -> Iterable[str]:
+    """All text fields a model/user can supply through CLI or MCP."""
+    yield memory.title
+    yield memory.body
+    yield memory.source.ref if memory.source else ""
+    yield memory.source.note if memory.source and memory.source.note else ""
+    yield " ".join(memory.tags)
+
+
 def review(memory: Memory, config: PolicyConfig | None = None) -> Memory:
     """Validate a proposed memory. Returns the (possibly redacted) memory or raises.
 
@@ -76,10 +95,9 @@ def review(memory: Memory, config: PolicyConfig | None = None) -> Memory:
                 "memory rejected: a usable source reference is required",
             )
 
-    # 2. Secret scan over title + body. Hard fail on any match.
+    # 2. Secret scan over every model-controlled field. Hard fail on any match.
     if cfg.scan_secrets:
-        haystacks = (memory.title, memory.body)
-        for text in haystacks:
+        for text in _model_controlled_text(memory):
             reason = _scan_for_secret(text)
             if reason is not None:
                 raise PolicyError(

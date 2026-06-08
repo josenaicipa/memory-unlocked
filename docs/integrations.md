@@ -4,6 +4,14 @@ Memory Unlocked is designed to sit behind whatever interface your agent runner
 already speaks. The core package has no transport opinions — you wrap it. Three
 common patterns follow.
 
+> Two of these ship in the box:
+> - a **CLI** (`python -m memory_unlocked`) — see [`install.md`](install.md);
+> - a **dependency-free MCP stdio server** (`python -m memory_unlocked.mcp_server`)
+>   — see [`hermes.md`](hermes.md).
+>
+> The sketches below explain the design those implementations follow. The HTTP
+> service is left as a pattern for you to wrap.
+
 In all cases the rules are the same:
 
 - The runner **always** passes a namespace. Never let the model pick its own
@@ -81,7 +89,7 @@ authenticated principal — not from the request body.
 POST /v1/memories
   Authorization: Bearer <token>          # resolves to tenant/project
   { "title": "...", "body": "...", "tags": [], "source": "docs/x.md" }
-  -> 201 { "id": "mem_0001" }
+  -> 201 { "id": "mem_<uuid>" }
   -> 422 { "rejected": "secret_detected" }
 
 GET /v1/memories?query=refund

@@ -71,3 +71,20 @@ def test_recall_emits_event(store):
     recall_events = [e for e in store.events() if e.type == "memory.recall"]
     assert recall_events
     assert recall_events[-1].namespace == NS
+
+
+def test_ops_recall_emits_one_recall_event(store):
+    from memory_unlocked import ops
+
+    store.add(Memory(
+        namespace=NS,
+        title="Queue retry policy",
+        body="Retry jobs three times.",
+        source=Source(kind="doc", ref="docs/jobs.md"),
+    ))
+    before = len([e for e in store.events() if e.type == "memory.recall"])
+    result = ops.recall(store, NS, query="retry")
+    after = len([e for e in store.events() if e.type == "memory.recall"])
+
+    assert "Queue retry policy" in result["context"]
+    assert after - before == 1

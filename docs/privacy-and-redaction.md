@@ -48,7 +48,7 @@ proposed write
 ├──────────────────────┤
 │ 2. Source check       │  reject if no usable source ref
 ├──────────────────────┤
-│ 3. Soft redaction     │  scrub flagged-but-recoverable content
+│ 3. Optional redaction │  implement if you prefer scrub-over-reject
 ├──────────────────────┤
 │ 4. Scope tagging      │  attach namespace; record provenance
 └──────────────────────┘
@@ -57,14 +57,16 @@ proposed write
    stored + event emitted
 ```
 
-1. **Secret scan.** The body and title are matched against credential-shaped
-   patterns. Any match is a hard rejection (`PolicyError`). The write is never
-   stored, not even partially.
+1. **Secret scan.** Every model-controlled text field is matched against
+   credential-shaped patterns: title, body, source ref, source note, and tags.
+   Any match is a hard rejection (`PolicyError`). The write is never stored, not
+   even partially.
 2. **Source check.** A memory with no usable source reference is rejected.
    Provenance is mandatory so every stored fact is verifiable later.
-3. **Soft redaction.** Content that is suspicious but recoverable (for example,
-   a long high-entropy token embedded in otherwise useful prose) can be scrubbed
-   rather than rejected, depending on your policy configuration.
+3. **Optional redaction hook.** The default policy hard-rejects obvious
+   credentials instead of trying to scrub them. If your deployment prefers
+   scrub-over-reject for borderline content, implement that as an explicit
+   policy extension after the hard-fail checks.
 4. **Scope tagging.** The namespace is attached and recorded in the event log.
 
 ## Human / agent review

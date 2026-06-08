@@ -1,0 +1,177 @@
+"""Service layer shared by the CLI and the MCP server.
+
+These functions translate primitive arguments (strings, lists) into model
+objects, run them through the store, and return JSON-safe result dicts. Putting
+the logic here means the CLI and the MCP server expose the *same* behavior and
+the *same* result shapes — there is one place where a write is built and one
+place where a rejection is shaped, so the two transports can never drift.
+
+Every function returns plain data. None of them print, read argv, or touch
+stdio; the transports own I/O.
+"""
+
+from __future__ import annotations
+
+from typing import Any, Dict, List, Optional
+
+from .assembler import AssemblerConfig, ContextAssembler
+from .models import Memory, Namespace, Source
+from .policy import PolicyError
+from .serialize import event_to_dict, memory_to_dict
+from .store import MemoryStore
+
+
+def _split_tags(tags: Optional[Any]) -> List[str]:
+    """Accept a comma string or a list; return a clean list of tags."""
+    if tags is None:
+        return []
+    if isinstance(tags, str):
+        return [t.strip() for t in tags.split(",") if t.strip()]
+    return [str(t).strip() for t in tags if str(t).strip()]
+
+
+def write_memory(
+    store: MemoryStore,
+    *,
+    namespace: Namespace,
+    title: str,
+    body: str,
+    source: str,
+    source_kind: str = "doc",
+    source_note: Optional[str] = None,
+    kind: str = "fact",
+    tags: Optional[Any] = None,
+    confidence: float = 1.0,
+) -> Dict[str, Any]:
+    """Build and store a memory.
+
+    Returns ``{"ok": True, "id": ...}`` on success, or
+    ``{"ok": False, "rejected": <reason>}`` if the gate or model validation
+    refuses it. The offending content is never included in the result.
+    """
+    try:
+        memory = Memory(
+            namespace=namespace,
+            title=title,
+            body=body,
+            source=Source(kind=source_kind, ref=source, note=source_note),
+            kind=kind,
+            tags=_split_tags(tags),
+            confidence=confidence,
+        )
+    except ValueError as exc:
+        return {"ok": False, "rejected": "invalid_input", "detail": str(exc)}
+
+    try:
+        stored = store.add(memory)
+    except PolicyError as exc:
+        return {"ok": False, "rejected": exc.reason}
+
+    return {"ok": True, "id": stored.id}
+
+
+def recall(
+    store: MemoryStore,
+    namespace: Namespace,
+    query: str = "",
+    max_memories: Optional[int] = None,
+) -> Dict[str, Any]:
+    """Assemble a scope-filtered context block plus the structured matches."""
+    config = AssemblerConfig(max_memories=max_memories) if max_memories else AssemblerConfig()
+    assembler = ContextAssembler(store, config)
+    selected = assembler.select(namespace, query=query)
+    context = assembler.assemble(namespace, query=query, selected=selected)
+    return {
+        "context": context,
+        "matches": [memory_to_dict(m) for m in selected],
+    }
+
+
+def list_memories(store: MemoryStore, namespace: Namespace) -> Dict[str, Any]:
+    """All memories in one scope.
+
+    This uses ``store.query`` so the listing is audited as a scope-local recall.
+    """
+    memories = store.query(namespace)
+    return {"memories": [memory_to_dict(m) for m in memories]}
+
+
+def compute_stats(
+    store: MemoryStore,
+    namespace: Optional[Namespace] = None,
+) -> Dict[str, Any]:
+    """Counts of memories per namespace and events per type."""
+    memories = [
+        m for m in store.all()
+        if namespace is None or m.namespace == namespace
+    ]
+    events = [
+        e for e in store.events()
+        if namespace is None or e.namespace == namespace
+    ]
+
+    ns_counts: Dict[str, int] = {}
+    for memory in memories:
+        ns_counts[memory.namespace.as_key()] = ns_counts.get(memory.namespace.as_key(), 0) + 1
+
+    event_counts: Dict[str, int] = {}
+    for event in events:
+        event_counts[event.type] = event_counts.get(event.type, 0) + 1
+
+    return {
+        "total": len(memories),
+        "namespaces": ns_counts,
+        "events": event_counts,
+    }
+
+
+def export_store(
+    store: MemoryStore,
+    namespace: Optional[Namespace] = None,
+) -> Dict[str, Any]:
+    """Export the store (delegates to a durable backend's exporter if present)."""
+    exporter = getattr(store, "export", None)
+    if callable(exporter):
+        return exporter(namespace)
+
+    memories = [
+        m for m in store.all()
+        if namespace is None or m.namespace == namespace
+    ]
+    events = [
+        e for e in store.events()
+        if namespace is None or e.namespace == namespace
+    ]
+    return {
+        "version": 1,
+        "memories": [memory_to_dict(m) for m in memories],
+        "events": [event_to_dict(e) for e in events],
+    }
+
+
+def import_into(store: MemoryStore, data: Dict[str, Any]) -> Dict[str, int]:
+    """Import an export document, re-running the policy gate on each memory."""
+    importer = getattr(store, "import_memories", None)
+    if callable(importer):
+        return importer(data)
+
+    imported = 0
+    rejected = 0
+    for record in data.get("memories", []):
+        result = write_memory(
+            store,
+            namespace=Namespace(record["namespace"]["tenant"], record["namespace"]["project"]),
+            title=record["title"],
+            body=record["body"],
+            source=record["source"]["ref"],
+            source_kind=record["source"]["kind"],
+            source_note=record["source"].get("note"),
+            kind=record.get("kind", "fact"),
+            tags=record.get("tags", []),
+            confidence=record.get("confidence", 1.0),
+        )
+        if result["ok"]:
+            imported += 1
+        else:
+            rejected += 1
+    return {"imported": imported, "rejected": rejected}

@@ -1,0 +1,251 @@
+"""Command-line interface: ``python -m memory_unlocked`` / ``memory-unlocked``.
+
+A thin, scriptable shell over the service layer in :mod:`memory_unlocked.ops`,
+backed by the durable :class:`~memory_unlocked.persistence.JsonlStore`. Every
+command resolves a store path, every write requires a source, and every recall
+or list requires an explicit namespace — the same guarantees the library makes.
+
+Exit codes:
+    0  success
+    2  usage error (argparse)
+    3  a write was rejected by the policy gate
+    1  any other runtime error
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import sys
+from datetime import datetime, timezone
+from typing import List, Optional, Sequence
+
+from . import __version__, ops
+from .models import Namespace
+from .persistence import JsonlStore, atomic_write_text
+
+DEFAULT_PATH = "./.memory_unlocked"
+ENV_PATH = "MEMORY_UNLOCKED_HOME"
+EXIT_OK = 0
+EXIT_REJECTED = 3
+EXIT_ERROR = 1
+
+
+def _utc_clock() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _resolve_path(args: argparse.Namespace) -> str:
+    return args.path or os.environ.get(ENV_PATH) or DEFAULT_PATH
+
+
+def _open_store(args: argparse.Namespace) -> JsonlStore:
+    return JsonlStore(_resolve_path(args), clock=_utc_clock)
+
+
+def _namespace(args: argparse.Namespace) -> Namespace:
+    return Namespace(tenant=args.tenant, project=args.project)
+
+
+def _optional_namespace(args: argparse.Namespace) -> Optional[Namespace]:
+    if args.tenant and args.project:
+        return Namespace(tenant=args.tenant, project=args.project)
+    if args.tenant or args.project:
+        raise SystemExit("error: --tenant and --project must be given together")
+    return None
+
+
+def _read_body(body: str) -> str:
+    """Allow ``--body -`` to read the body from stdin (handy for piping)."""
+    if body == "-":
+        return sys.stdin.read().strip()
+    return body
+
+
+# --- Command handlers --------------------------------------------------------
+
+def _cmd_init(args: argparse.Namespace) -> int:
+    store = _open_store(args)
+    print(f"Initialized memory store at {store.path}")
+    print(f"  memories: {store.path / 'memories.jsonl'}")
+    print(f"  events:   {store.path / 'events.jsonl'}")
+    return EXIT_OK
+
+
+def _cmd_write(args: argparse.Namespace) -> int:
+    store = _open_store(args)
+    result = ops.write_memory(
+        store,
+        namespace=_namespace(args),
+        title=args.title,
+        body=_read_body(args.body),
+        source=args.source,
+        source_kind=args.source_kind,
+        source_note=args.source_note,
+        kind=args.kind,
+        tags=args.tags,
+        confidence=args.confidence,
+    )
+    if args.json:
+        print(json.dumps(result))
+    elif result["ok"]:
+        print(f"stored {result['id']}")
+    else:
+        detail = f" ({result['detail']})" if result.get("detail") else ""
+        print(f"rejected: {result['rejected']}{detail}", file=sys.stderr)
+    return EXIT_OK if result["ok"] else EXIT_REJECTED
+
+
+def _cmd_recall(args: argparse.Namespace) -> int:
+    store = _open_store(args)
+    result = ops.recall(store, _namespace(args), query=args.query, max_memories=args.max)
+    if args.json:
+        print(json.dumps(result))
+    elif result["context"]:
+        print(result["context"])
+    else:
+        print("(no matching memories)")
+    return EXIT_OK
+
+
+def _cmd_list(args: argparse.Namespace) -> int:
+    store = _open_store(args)
+    result = ops.list_memories(store, _namespace(args))
+    if args.json:
+        print(json.dumps(result))
+    elif not result["memories"]:
+        print("(no memories in scope)")
+    else:
+        for m in result["memories"]:
+            tags = f" [{', '.join(m['tags'])}]" if m["tags"] else ""
+            src = f"{m['source']['kind']}:{m['source']['ref']}"
+            print(f"- {m['id']}  {m['title']}{tags}  (source: {src})")
+    return EXIT_OK
+
+
+def _cmd_stats(args: argparse.Namespace) -> int:
+    store = _open_store(args)
+    result = ops.compute_stats(store, _optional_namespace(args))
+    if args.json:
+        print(json.dumps(result))
+    else:
+        print(f"memories: {result['total']}")
+        if result["namespaces"]:
+            print("by namespace:")
+            for key, count in sorted(result["namespaces"].items()):
+                print(f"  {key}: {count}")
+        if result["events"]:
+            print("events:")
+            for key, count in sorted(result["events"].items()):
+                print(f"  {key}: {count}")
+    return EXIT_OK
+
+
+def _cmd_export(args: argparse.Namespace) -> int:
+    store = _open_store(args)
+    data = ops.export_store(store, _optional_namespace(args))
+    text = json.dumps(data, indent=2, sort_keys=True)
+    if args.out:
+        atomic_write_text(args.out, text + "\n")
+        print(f"exported {len(data['memories'])} memories to {args.out}", file=sys.stderr)
+    else:
+        print(text)
+    return EXIT_OK
+
+
+def _cmd_import(args: argparse.Namespace) -> int:
+    store = _open_store(args)
+    with open(args.in_file, "r", encoding="utf-8") as fh:
+        data = json.load(fh)
+    result = ops.import_into(store, data)
+    if args.json:
+        print(json.dumps(result))
+    else:
+        print(f"imported {result['imported']}, rejected {result['rejected']}")
+    return EXIT_OK
+
+
+# --- Argument parsing --------------------------------------------------------
+
+def _build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="memory-unlocked",
+        description="Privacy-first, scope-isolated local memory for AI agents.",
+    )
+    parser.add_argument("--version", action="version", version=f"memory-unlocked {__version__}")
+    parser.add_argument(
+        "--path",
+        help=f"store directory (default: ${ENV_PATH} or {DEFAULT_PATH})",
+    )
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    def add_ns(p: argparse.ArgumentParser, required: bool = True) -> None:
+        p.add_argument("--tenant", required=required, help="tenant scope")
+        p.add_argument("--project", required=required, help="project scope")
+
+    p_init = sub.add_parser("init", help="create a store directory")
+    p_init.set_defaults(func=_cmd_init)
+
+    p_write = sub.add_parser("write", help="store a durable fact")
+    add_ns(p_write)
+    p_write.add_argument("--title", required=True)
+    p_write.add_argument("--body", required=True, help="fact body, or '-' to read stdin")
+    p_write.add_argument("--source", required=True, help="provenance ref (path, url, id)")
+    p_write.add_argument("--source-kind", default="doc",
+                         help="doc|url|ticket|commit|run|message (default: doc)")
+    p_write.add_argument("--source-note", default=None)
+    p_write.add_argument("--kind", default="fact",
+                         help="fact|decision|convention|reference (default: fact)")
+    p_write.add_argument("--tags", default=None, help="comma-separated tags")
+    p_write.add_argument("--confidence", type=float, default=1.0)
+    p_write.add_argument("--json", action="store_true")
+    p_write.set_defaults(func=_cmd_write)
+
+    for name in ("recall", "context"):
+        p_recall = sub.add_parser(name, help="assemble scope-filtered context")
+        add_ns(p_recall)
+        p_recall.add_argument("--query", default="")
+        p_recall.add_argument("--max", type=int, default=None, help="max memories")
+        p_recall.add_argument("--json", action="store_true")
+        p_recall.set_defaults(func=_cmd_recall)
+
+    p_list = sub.add_parser("list", help="list memories in a scope")
+    add_ns(p_list)
+    p_list.add_argument("--json", action="store_true")
+    p_list.set_defaults(func=_cmd_list)
+
+    p_stats = sub.add_parser("stats", help="counts of memories and events")
+    add_ns(p_stats, required=False)
+    p_stats.add_argument("--json", action="store_true")
+    p_stats.set_defaults(func=_cmd_stats)
+
+    p_export = sub.add_parser("export", help="export memories as JSON")
+    add_ns(p_export, required=False)
+    p_export.add_argument("--out", default=None, help="write to a file instead of stdout")
+    p_export.set_defaults(func=_cmd_export)
+
+    p_import = sub.add_parser("import", help="import an export document (re-gated)")
+    p_import.add_argument("--in", dest="in_file", required=True, help="export JSON file")
+    p_import.add_argument("--json", action="store_true")
+    p_import.set_defaults(func=_cmd_import)
+
+    return parser
+
+
+def main(argv: Optional[Sequence[str]] = None) -> int:
+    parser = _build_parser()
+    args = parser.parse_args(list(argv) if argv is not None else None)
+    try:
+        return args.func(args)
+    except BrokenPipeError:  # pragma: no cover - piping into head etc.
+        return EXIT_OK
+    except SystemExit:
+        raise
+    except Exception as exc:  # noqa: BLE001 - top-level guard for a CLI
+        print(f"error: {exc}", file=sys.stderr)
+        return EXIT_ERROR
+
+
+if __name__ == "__main__":  # pragma: no cover
+    sys.exit(main())

@@ -7,11 +7,11 @@ keep the scope-filter-inside-the-query invariant.
 
 from __future__ import annotations
 
-import itertools
+import uuid
 from typing import Dict, Iterable, List, Optional
 
 from .models import Event, Memory, Namespace
-from .policy import PolicyConfig, PolicyError, review
+from .policy import PolicyConfig, PolicyError, redact_if_secret, review
 
 
 class MemoryStore:
@@ -27,21 +27,23 @@ class MemoryStore:
         # namespace key -> list of memory ids, preserving insertion order.
         self._by_ns: Dict[str, List[str]] = {}
         self._events: List[Event] = []
-        self._ids = itertools.count(1)
         self._policy = policy or PolicyConfig()
         # Injectable clock so tests are deterministic and we avoid wall-clock
         # calls inside the library. Returns an ISO-8601 string.
         self._clock = clock or (lambda: "1970-01-01T00:00:00Z")
 
     @classmethod
-    def open(cls, path: str, **kwargs) -> "MemoryStore":  # pragma: no cover
-        """Placeholder for a persistent backend.
+    def open(cls, path: str, **kwargs) -> "MemoryStore":
+        """Open a durable, file-backed store at ``path``.
 
-        The reference implementation is in-memory only; ``path`` is accepted so
-        downstream code can switch to a durable store without changing call
-        sites. Adapt this to load/save from ``path`` in your own backend.
+        Returns a :class:`~memory_unlocked.persistence.JsonlStore`, which shares
+        this class's surface (``add``, ``query``, ``all``, ``events``) and the
+        same scope/policy guarantees, but persists to disk. Imported lazily to
+        keep this module free of a persistence dependency.
         """
-        return cls(**kwargs)
+        from .persistence import JsonlStore
+
+        return JsonlStore(path, **kwargs)
 
     def add(self, memory: Memory) -> Memory:
         """Run the policy gate, assign an id, store, and emit an event.
@@ -52,7 +54,7 @@ class MemoryStore:
             reviewed = review(memory, self._policy)
         except PolicyError as exc:
             # Audit the rejection without ever recording the offending content.
-            self._events.append(Event(
+            self._emit(Event(
                 type="memory.reject",
                 namespace=memory.namespace,
                 at=self._clock(),
@@ -60,19 +62,32 @@ class MemoryStore:
             ))
             raise
 
-        reviewed.id = f"mem_{next(self._ids):04d}"
+        reviewed.id = f"mem_{uuid.uuid4().hex}"
         reviewed.created_at = self._clock()
 
         self._by_id[reviewed.id] = reviewed
         self._by_ns.setdefault(reviewed.namespace.as_key(), []).append(reviewed.id)
+        self._persist_memory(reviewed)
 
-        self._events.append(Event(
+        self._emit(Event(
             type="memory.write",
             namespace=reviewed.namespace,
             at=reviewed.created_at,
             detail={"id": reviewed.id, "title": reviewed.title},
         ))
         return reviewed
+
+    # --- Persistence hooks ---------------------------------------------------
+    # No-ops in the in-memory store. A durable backend overrides these to write
+    # to its storage. Keeping them here means the add/query control flow — and
+    # therefore the scope/policy invariants — lives in exactly one place.
+
+    def _emit(self, event: Event) -> None:
+        """Record an event. Override to also persist it."""
+        self._events.append(event)
+
+    def _persist_memory(self, memory: Memory) -> None:
+        """Called after a memory is accepted and indexed. Override to persist."""
 
     def query(self, namespace: Namespace, text: Optional[str] = None) -> List[Memory]:
         """Return memories in ``namespace`` only, optionally text-filtered.
@@ -81,13 +96,15 @@ class MemoryStore:
         case-insensitive substring/tag check on the in-scope set.
         """
         ids = self._by_ns.get(namespace.as_key(), [])
-        in_scope = [self._by_id[i] for i in ids]
+        # Defense in depth: even if a malformed/colliding persisted index ever
+        # points at the wrong object, query re-checks the object's namespace.
+        in_scope = [self._by_id[i] for i in ids if self._by_id[i].namespace == namespace]
 
-        self._events.append(Event(
+        self._emit(Event(
             type="memory.recall",
             namespace=namespace,
             at=self._clock(),
-            detail={"query": text or "", "scope_size": len(in_scope)},
+            detail={"query": redact_if_secret(text or ""), "scope_size": len(in_scope)},
         ))
 
         if not text:
