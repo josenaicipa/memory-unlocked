@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "memory-unlocked"
+version = "0.1.0"
+description = "A privacy-first, scoped memory fabric for AI agents."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+keywords = ["ai", "agents", "memory", "privacy", "namespace", "mcp"]
+authors = [{ name = "Memory Unlocked contributors" }]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Topic :: Software Development :: Libraries",
+]
+# Core is intentionally dependency-free.
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest>=7.0"]
+
+[project.urls]
+Documentation = "https://github.com/your-org/memory-unlocked/tree/main/docs"
+Source = "https://github.com/your-org/memory-unlocked"
+
+[tool.setuptools]
+packages = ["memory_unlocked"]
+
+[tool.pytest.ini_options]
+minversion = "7.0"
+testpaths = ["tests"]
+addopts = "-q"
+python_files = ["test_*.py"]
+python_functions = ["test_*"]

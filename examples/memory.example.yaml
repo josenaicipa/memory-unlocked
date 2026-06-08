@@ -1,0 +1,62 @@
+# Example memories for Memory Unlocked.
+#
+# These are non-private, illustrative samples for a fictional "acme" tenant.
+# They show the canonical shape (see docs/schema.md) and good "durable fact"
+# hygiene: stable conclusions, real sources, no secrets, no PII.
+#
+# Load these with your own importer; the core library treats them as plain data.
+
+memories:
+  - namespace: { tenant: acme, project: billing }
+    title: Refunds run through the async queue
+    body: >
+      Refund requests are enqueued and processed by a background worker rather
+      than inline, so checkout latency stays low even during refund spikes.
+    kind: decision
+    tags: [billing, architecture, refunds]
+    source: { kind: doc, ref: docs/refunds.md }
+    confidence: 0.9
+
+  - namespace: { tenant: acme, project: billing }
+    title: Money amounts are stored in minor units
+    body: >
+      All monetary values are persisted as integer minor units (e.g. cents) to
+      avoid floating-point rounding errors. Format to decimal only at the edge.
+    kind: convention
+    tags: [billing, money, convention]
+    source: { kind: doc, ref: docs/money.md }
+    confidence: 0.95
+
+  - namespace: { tenant: acme, project: web }
+    title: Feature flags are evaluated server-side
+    body: >
+      Flags are resolved on the server and sent to the client as a resolved
+      boolean, so the client bundle never ships flag-targeting rules.
+    kind: decision
+    tags: [web, feature-flags, security]
+    source: { kind: ticket, ref: PROJ-142 }
+    confidence: 0.85
+
+  - namespace: { tenant: acme, project: web }
+    title: CI runs in offline mode
+    body: >
+      The CI pipeline uses an offline flag because the package mirror in that
+      environment is read-only. Builds that try to fetch will fail.
+    kind: fact
+    tags: [web, ci, build]
+    source: { kind: commit, ref: 0a1b2c3 }
+    links:
+      - { rel: relates_to, target_id: mem_web_build }
+    confidence: 0.8
+
+  # Different tenant — demonstrates isolation. A recall under acme must never
+  # return this memory.
+  - namespace: { tenant: globex, project: docs }
+    title: Docs are versioned per release branch
+    body: >
+      Documentation is built from the matching release branch so published docs
+      always reflect the deployed version rather than main.
+    kind: convention
+    tags: [docs, versioning]
+    source: { kind: url, ref: "https://example.com/docs/versioning" }
+    confidence: 0.9
