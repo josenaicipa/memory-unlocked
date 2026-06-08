@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from typing import Any, Dict
 
-from .models import Event, Link, Memory, Namespace, Source
+from .models import DEFAULT_STATUS, Event, Link, Memory, Namespace, Source
 
 
 def namespace_to_dict(ns: Namespace) -> Dict[str, str]:
@@ -42,7 +42,9 @@ def memory_to_dict(memory: Memory) -> Dict[str, Any]:
         "source": source_to_dict(memory.source),
         "links": [{"rel": link.rel, "target_id": link.target_id} for link in memory.links],
         "confidence": memory.confidence,
+        "status": memory.status,
         "created_at": memory.created_at,
+        "updated_at": memory.updated_at,
     }
 
 
@@ -57,10 +59,14 @@ def memory_from_dict(d: Dict[str, Any]) -> Memory:
         tags=list(d.get("tags", [])),
         links=[Link(rel=link["rel"], target_id=link["target_id"]) for link in d.get("links", [])],
         confidence=d.get("confidence", 1.0),
+        # Records written before lifecycle support have no status; treat them as
+        # active so existing stores keep behaving exactly as before.
+        status=d.get("status", DEFAULT_STATUS),
     )
-    # id / created_at are assigned post-construction (they are store-owned).
+    # id / created_at / updated_at are assigned post-construction (store-owned).
     memory.id = d.get("id")
     memory.created_at = d.get("created_at")
+    memory.updated_at = d.get("updated_at", d.get("created_at"))
     return memory
 
 

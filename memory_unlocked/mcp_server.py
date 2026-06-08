@@ -8,9 +8,10 @@ It speaks JSON-RPC 2.0 over newline-delimited stdio — the MCP stdio transport 
 and exposes four tools to an agent runner such as Hermes or Claude:
 
     memory_write   propose a durable, non-sensitive fact
-    memory_recall  recall scope-filtered context for the current project
-    memory_list    list the memories in the current scope
-    memory_stats   counts of memories and audit events
+    memory_recall   recall scope-filtered structured matches for the current project
+    memory_context  build a token-budgeted prompt context block
+    memory_list     list the memories in the current scope
+    memory_stats    counts of memories and audit events
 
 The security model from the docs is enforced here: **the namespace is never a
 tool argument.** The runner picks the scope by launching the server with
@@ -33,7 +34,6 @@ from typing import Any, Dict, List, Optional, TextIO
 
 from . import __version__, ops
 from .models import Namespace
-from .persistence import JsonlStore
 from .store import MemoryStore
 
 PROTOCOL_VERSION = "2024-11-05"
@@ -47,6 +47,7 @@ INVALID_PARAMS = -32602
 INTERNAL_ERROR = -32603
 
 ENV_PATH = "MEMORY_UNLOCKED_HOME"
+ENV_BACKEND = "MEMORY_UNLOCKED_BACKEND"
 ENV_TENANT = "MEMORY_UNLOCKED_TENANT"
 ENV_PROJECT = "MEMORY_UNLOCKED_PROJECT"
 DEFAULT_PATH = "./.memory_unlocked"
@@ -73,6 +74,11 @@ def build_tools() -> List[Dict[str, Any]]:
                     "body": {"type": "string", "description": "The stable fact."},
                     "source": {"type": "string", "description": "A doc path, URL, or id."},
                     "tags": {"type": "array", "items": {"type": "string"}},
+                    "status": {
+                        "type": "string",
+                        "enum": ["candidate", "active"],
+                        "description": "Lifecycle status. MCP defaults to candidate for human review.",
+                    },
                     "kind": {
                         "type": "string",
                         "enum": ["fact", "decision", "convention", "reference"],
@@ -88,6 +94,19 @@ def build_tools() -> List[Dict[str, Any]]:
                 "type": "object",
                 "properties": {
                     "query": {"type": "string", "description": "What to recall."},
+                },
+                "required": ["query"],
+            },
+        },
+        {
+            "name": "memory_context",
+            "description": "Build a token-budgeted context block for the current project scope.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "What the agent is working on."},
+                    "token_budget": {"type": "integer", "description": "Approximate max tokens."},
+                    "max_memories": {"type": "integer", "description": "Optional hard cap."},
                 },
                 "required": ["query"],
             },
@@ -123,7 +142,8 @@ class MemoryMcpServer:
                 "to a project scope (the namespace is never model-controlled)."
             )
         path = os.environ.get(ENV_PATH) or DEFAULT_PATH
-        store = JsonlStore(path, clock=_utc_clock)
+        backend = os.environ.get(ENV_BACKEND) or "jsonl"
+        store = MemoryStore.open(path, backend=backend, clock=_utc_clock)
         return cls(store=store, namespace=Namespace(tenant=tenant, project=project))
 
     # --- Request routing -----------------------------------------------------
@@ -162,6 +182,8 @@ class MemoryMcpServer:
                 return self._tool_write(arguments)
             if name == "memory_recall":
                 return self._tool_recall(arguments)
+            if name == "memory_context":
+                return self._tool_context(arguments)
             if name == "memory_list":
                 return self._tool_list()
             if name == "memory_stats":
@@ -184,6 +206,7 @@ class MemoryMcpServer:
             source_kind=args.get("source_kind", "doc"),
             kind=args.get("kind", "fact"),
             tags=args.get("tags"),
+            status=args.get("status", "candidate"),
         )
         if result["ok"]:
             text = f"stored {result['id']}"
@@ -194,6 +217,17 @@ class MemoryMcpServer:
 
     def _tool_recall(self, args: Dict[str, Any]) -> Dict[str, Any]:
         result = ops.recall(self._store, self._namespace, query=args.get("query", ""))
+        text = result["context"] or "(no matching memories)"
+        return self._tool_result(text, result)
+
+    def _tool_context(self, args: Dict[str, Any]) -> Dict[str, Any]:
+        result = ops.build_context(
+            self._store,
+            self._namespace,
+            query=args.get("query", ""),
+            token_budget=args.get("token_budget"),
+            max_memories=args.get("max_memories"),
+        )
         text = result["context"] or "(no matching memories)"
         return self._tool_result(text, result)
 

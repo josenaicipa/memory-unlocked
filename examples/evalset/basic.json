@@ -1,0 +1,28 @@
+{
+  "name": "basic-public-smoke",
+  "memories": [
+    {
+      "namespace": {"tenant": "acme", "project": "demo"},
+      "title": "Refund routing",
+      "body": "Refund requests are routed to the billing worker before confirmation.",
+      "source": {"kind": "doc", "ref": "examples/evalset/basic.json"},
+      "tags": ["billing", "refunds"],
+      "status": "active"
+    }
+  ],
+  "recall_cases": [
+    {
+      "namespace": {"tenant": "acme", "project": "demo"},
+      "query": "refund worker",
+      "expect_titles": ["Refund routing"],
+      "token_budget": 120
+    }
+  ],
+  "isolation_cases": [
+    {
+      "namespace": {"tenant": "globex", "project": "demo"},
+      "query": "refund",
+      "forbidden_substrings": ["Refund routing"]
+    }
+  ]
+}

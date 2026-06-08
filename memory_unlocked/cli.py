@@ -18,15 +18,18 @@ import argparse
 import json
 import os
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import List, Optional, Sequence
 
-from . import __version__, ops
+from . import __version__, evaluation, ops
 from .models import Namespace
-from .persistence import JsonlStore, atomic_write_text
+from .persistence import atomic_write_text
+from .store import MemoryStore
 
 DEFAULT_PATH = "./.memory_unlocked"
 ENV_PATH = "MEMORY_UNLOCKED_HOME"
+ENV_BACKEND = "MEMORY_UNLOCKED_BACKEND"
+DEFAULT_BACKEND = "jsonl"
 EXIT_OK = 0
 EXIT_REJECTED = 3
 EXIT_ERROR = 1
@@ -40,8 +43,12 @@ def _resolve_path(args: argparse.Namespace) -> str:
     return args.path or os.environ.get(ENV_PATH) or DEFAULT_PATH
 
 
-def _open_store(args: argparse.Namespace) -> JsonlStore:
-    return JsonlStore(_resolve_path(args), clock=_utc_clock)
+def _resolve_backend(args: argparse.Namespace) -> str:
+    return getattr(args, "backend", None) or os.environ.get(ENV_BACKEND) or DEFAULT_BACKEND
+
+
+def _open_store(args: argparse.Namespace) -> MemoryStore:
+    return MemoryStore.open(_resolve_path(args), backend=_resolve_backend(args), clock=_utc_clock)
 
 
 def _namespace(args: argparse.Namespace) -> Namespace:
@@ -67,9 +74,13 @@ def _read_body(body: str) -> str:
 
 def _cmd_init(args: argparse.Namespace) -> int:
     store = _open_store(args)
-    print(f"Initialized memory store at {store.path}")
-    print(f"  memories: {store.path / 'memories.jsonl'}")
-    print(f"  events:   {store.path / 'events.jsonl'}")
+    backend = _resolve_backend(args)
+    print(f"Initialized {backend} memory store at {store.path}")
+    if backend == "sqlite":
+        print(f"  database: {store.db_file}")
+    else:
+        print(f"  memories: {store.path / 'memories.jsonl'}")
+        print(f"  events:   {store.path / 'events.jsonl'}")
     return EXIT_OK
 
 
@@ -86,11 +97,12 @@ def _cmd_write(args: argparse.Namespace) -> int:
         kind=args.kind,
         tags=args.tags,
         confidence=args.confidence,
+        status=getattr(args, "status", "active"),
     )
     if args.json:
         print(json.dumps(result))
     elif result["ok"]:
-        print(f"stored {result['id']}")
+        print(f"stored {result['id']} ({result['status']})")
     else:
         detail = f" ({result['detail']})" if result.get("detail") else ""
         print(f"rejected: {result['rejected']}{detail}", file=sys.stderr)
@@ -99,7 +111,14 @@ def _cmd_write(args: argparse.Namespace) -> int:
 
 def _cmd_recall(args: argparse.Namespace) -> int:
     store = _open_store(args)
-    result = ops.recall(store, _namespace(args), query=args.query, max_memories=args.max)
+    token_budget = getattr(args, "token_budget", None)
+    if token_budget:
+        result = ops.build_context(
+            store, _namespace(args), query=args.query,
+            token_budget=token_budget, max_memories=args.max,
+        )
+    else:
+        result = ops.recall(store, _namespace(args), query=args.query, max_memories=args.max)
     if args.json:
         print(json.dumps(result))
     elif result["context"]:
@@ -166,6 +185,72 @@ def _cmd_import(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+
+def _cmd_status(args: argparse.Namespace) -> int:
+    store = _open_store(args)
+    result = ops.set_memory_status(store, args.id, args.status)
+    print(json.dumps(result) if args.json else (f"{args.id}: {result.get('status', result.get('error'))}"))
+    return EXIT_OK if result.get("ok") else EXIT_ERROR
+
+
+def _cmd_forget(args: argparse.Namespace) -> int:
+    store = _open_store(args)
+    result = ops.forget_memory(store, args.id)
+    print(json.dumps(result) if args.json else ("forgotten" if result["forgotten"] else "not found"))
+    return EXIT_OK if result["forgotten"] else EXIT_ERROR
+
+
+def _cmd_audit(args: argparse.Namespace) -> int:
+    store = _open_store(args)
+    cutoff = None
+    if args.stale_days is not None:
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=args.stale_days)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    result = ops.audit(
+        store,
+        namespace=_optional_namespace(args),
+        min_confidence=args.min_confidence,
+        stale_before=cutoff,
+    )
+    if args.json:
+        print(json.dumps(result))
+    else:
+        print(f"memories audited: {result['total']}")
+        print(f"candidates: {len(result['candidates'])}")
+        print(f"low confidence: {len(result['low_confidence'])}")
+        print(f"stale: {len(result['stale'])}")
+        print(f"duplicate groups: {len(result['duplicates'])}")
+    return EXIT_OK
+
+
+def _cmd_review(args: argparse.Namespace) -> int:
+    store = _open_store(args)
+    result = ops.audit(store, namespace=_optional_namespace(args), min_confidence=args.min_confidence)
+    candidates = result["candidates"]
+    if args.json:
+        print(json.dumps({"candidates": candidates}))
+    elif not candidates:
+        print("No candidate memories pending review.")
+    else:
+        print("Candidate memories pending review:")
+        for item in candidates:
+            print(f"- {item['id']} [{item['namespace']}] {item['title']} (confidence={item['confidence']})")
+        print("\nPromote one with: memory-unlocked status --id <id> --status active")
+        print("Archive one with: memory-unlocked status --id <id> --status archived")
+    return EXIT_OK
+
+
+def _cmd_eval(args: argparse.Namespace) -> int:
+    data = evaluation.load_evalset(args.evalset)
+    result = evaluation.run_evalset(data)
+    if args.json:
+        print(json.dumps(result))
+    else:
+        print(f"eval: {result['name']}")
+        print(f"recall hit rate: {result['recall_hit_rate']:.2f}")
+        print(f"isolation pass rate: {result['isolation_pass_rate']:.2f}")
+        print(f"token budget pass rate: {result['token_budget_pass_rate']:.2f}")
+    return EXIT_OK if result.get("passed") else EXIT_ERROR
+
 # --- Argument parsing --------------------------------------------------------
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -177,6 +262,10 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--path",
         help=f"store directory (default: ${ENV_PATH} or {DEFAULT_PATH})",
+    )
+    parser.add_argument(
+        "--backend", choices=("jsonl", "sqlite"),
+        help=f"storage backend (default: ${ENV_BACKEND} or {DEFAULT_BACKEND})",
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
@@ -199,6 +288,8 @@ def _build_parser() -> argparse.ArgumentParser:
                          help="fact|decision|convention|reference (default: fact)")
     p_write.add_argument("--tags", default=None, help="comma-separated tags")
     p_write.add_argument("--confidence", type=float, default=1.0)
+    p_write.add_argument("--status", default="active",
+                         help="candidate|active|archived|rejected (default: active)")
     p_write.add_argument("--json", action="store_true")
     p_write.set_defaults(func=_cmd_write)
 
@@ -207,6 +298,8 @@ def _build_parser() -> argparse.ArgumentParser:
         add_ns(p_recall)
         p_recall.add_argument("--query", default="")
         p_recall.add_argument("--max", type=int, default=None, help="max memories")
+        p_recall.add_argument("--token-budget", type=int, default=None,
+                              help="estimated token budget for context assembly")
         p_recall.add_argument("--json", action="store_true")
         p_recall.set_defaults(func=_cmd_recall)
 
@@ -229,6 +322,35 @@ def _build_parser() -> argparse.ArgumentParser:
     p_import.add_argument("--in", dest="in_file", required=True, help="export JSON file")
     p_import.add_argument("--json", action="store_true")
     p_import.set_defaults(func=_cmd_import)
+
+    p_status = sub.add_parser("status", help="set lifecycle status for one memory")
+    p_status.add_argument("--id", required=True)
+    p_status.add_argument("--status", required=True, help="candidate|active|archived|rejected")
+    p_status.add_argument("--json", action="store_true")
+    p_status.set_defaults(func=_cmd_status)
+
+    p_forget = sub.add_parser("forget", help="permanently remove one memory")
+    p_forget.add_argument("--id", required=True)
+    p_forget.add_argument("--json", action="store_true")
+    p_forget.set_defaults(func=_cmd_forget)
+
+    p_audit = sub.add_parser("audit", help="governance scan without printing memory bodies")
+    add_ns(p_audit, required=False)
+    p_audit.add_argument("--min-confidence", type=float, default=0.5)
+    p_audit.add_argument("--stale-days", type=int, default=None)
+    p_audit.add_argument("--json", action="store_true")
+    p_audit.set_defaults(func=_cmd_audit)
+
+    p_review = sub.add_parser("review", help="text UI for candidate memory review")
+    add_ns(p_review, required=False)
+    p_review.add_argument("--min-confidence", type=float, default=0.5)
+    p_review.add_argument("--json", action="store_true")
+    p_review.set_defaults(func=_cmd_review)
+
+    p_eval = sub.add_parser("eval", help="run an offline recall/privacy evalset")
+    p_eval.add_argument("evalset")
+    p_eval.add_argument("--json", action="store_true")
+    p_eval.set_defaults(func=_cmd_eval)
 
     return parser
 

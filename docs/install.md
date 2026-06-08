@@ -1,138 +1,84 @@
 # Install & CLI
 
-Memory Unlocked is a single dependency-free Python package. It runs on Python
-3.9+ with nothing but the standard library. `pytest` is needed only to run the
-tests.
-
 ## Install
 
-From a clone (editable, recommended while evaluating):
+```bash
+pipx install memory-unlocked
+# or
+uv tool install memory-unlocked
+# or from source
+python -m pip install -e '.[dev]'
+```
+
+Core dependencies: none beyond Python stdlib.
+
+## Store backends
+
+JSONL is simple and append-only:
 
 ```bash
-git clone https://github.com/josenaicipa/memory-unlocked.git
-cd memory-unlocked
-python -m pip install -e .
+memory-unlocked --path ./.memory init
 ```
 
-Or install straight from the repo:
+SQLite is recommended for single-machine production:
 
 ```bash
-python -m pip install "git+https://github.com/josenaicipa/memory-unlocked.git"
+memory-unlocked --backend sqlite --path ./.memory init
+# or
+MEMORY_UNLOCKED_BACKEND=sqlite memory-unlocked --path ./.memory init
 ```
 
-Installing exposes two console scripts:
-
-| Command | What it does |
-| --- | --- |
-| `memory-unlocked` | The CLI (same as `python -m memory_unlocked`). |
-| `memory-unlocked-mcp` | The MCP stdio server (same as `python -m memory_unlocked.mcp_server`). |
-
-You can always use the module form without installing — from the repo root:
+## Core commands
 
 ```bash
-python -m memory_unlocked --help
+memory-unlocked --path ./.memory write \
+  --tenant acme --project demo \
+  --title "Refund routing" \
+  --body "Refunds route through the billing worker." \
+  --source docs/runbook.md \
+  --tags billing,refunds
+
+memory-unlocked --path ./.memory context \
+  --tenant acme --project demo \
+  --query "refund worker" \
+  --token-budget 200
+
+memory-unlocked --path ./.memory list --tenant acme --project demo
+memory-unlocked --path ./.memory stats --json
 ```
 
-## Where memory is stored
-
-Everything is local. A store is just a directory with two append-only JSON Lines
-files:
-
-```
-<store>/
-├── memories.jsonl   one accepted fact per line
-└── events.jsonl     one audit event per line (write / recall / reject)
-```
-
-The store path is resolved in this order:
-
-1. `--path <dir>` on the command line
-2. the `MEMORY_UNLOCKED_HOME` environment variable
-3. `./.memory_unlocked` (default)
-
-## CLI tour
-
-All examples use generic scopes (`acme/billing`). Pick your own `tenant` and
-`project`.
-
-### Initialize
+## Lifecycle/governance
 
 ```bash
-memory-unlocked --path ./mem init
+memory-unlocked --path ./.memory write \
+  --tenant acme --project demo \
+  --title "Needs approval" \
+  --body "Candidate memory pending review." \
+  --source docs/review.md \
+  --status candidate
+
+memory-unlocked --path ./.memory review --tenant acme --project demo
+memory-unlocked --path ./.memory status --id mem_xxx --status active
+memory-unlocked --path ./.memory status --id mem_xxx --status archived
+memory-unlocked --path ./.memory forget --id mem_xxx
+memory-unlocked --path ./.memory audit --json
 ```
 
-### Write a durable fact
+Governance output intentionally omits memory bodies.
 
-A write always requires a `--source`. Writes that look like secrets are rejected
-at the gate (exit code `3`) and the offending value is never echoed back.
+## Export/import
 
 ```bash
-memory-unlocked --path ./mem write \
-  --tenant acme --project billing \
-  --title "Refunds run through the async queue" \
-  --body  "Refund requests are enqueued and processed by a worker, not inline." \
-  --source docs/refunds.md \
-  --tags billing,architecture \
-  --kind decision
+memory-unlocked --path ./.memory export --out export.json
+memory-unlocked --path ./.other-memory import --in export.json
 ```
 
-Pipe a longer body in via stdin with `--body -`:
+Imports re-run the policy gate.
+
+## Eval
 
 ```bash
-cat notes.md | memory-unlocked --path ./mem write \
-  --tenant acme --project billing --title "Build notes" --source commit:abc123 --body -
+memory-unlocked eval examples/evalset/basic.json
 ```
 
-### Recall scope-filtered context
-
-```bash
-memory-unlocked --path ./mem recall \
-  --tenant acme --project billing --query "refund"
-```
-
-Recall only ever returns memories written under the exact same `tenant/project`.
-
-### List, stats, export, import
-
-```bash
-memory-unlocked --path ./mem list  --tenant acme --project billing
-memory-unlocked --path ./mem stats                         # all scopes
-memory-unlocked --path ./mem export > backup.json          # JSON to stdout
-memory-unlocked --path ./mem import --in backup.json       # re-gated on import
-```
-
-Add `--json` to `write`, `recall`, `list`, and `stats` for machine-readable
-output you can pipe into `jq` or another agent.
-
-### Exit codes
-
-| Code | Meaning |
-| --- | --- |
-| `0` | success |
-| `2` | usage error (bad/missing arguments) |
-| `3` | a write was rejected by the policy gate |
-| `1` | any other runtime error |
-
-## Library use
-
-The same store is importable:
-
-```python
-from memory_unlocked import JsonlStore, Memory, Namespace, Source, ContextAssembler
-
-store = JsonlStore("./mem")            # durable, file-backed
-ns = Namespace("acme", "billing")
-
-store.add(Memory(
-    namespace=ns,
-    title="CI runs with the offline flag",
-    body="The registry mirror is read-only in CI, so builds pass --offline.",
-    source=Source(kind="commit", ref="abc123"),
-    tags=["ci", "build"],
-))
-
-print(ContextAssembler(store).assemble(ns, query="ci build"))
-```
-
-For wiring the MCP server into an agent runner, see
-[`docs/hermes.md`](hermes.md).
+The eval harness is offline and checks recall, namespace isolation, and token budgets.

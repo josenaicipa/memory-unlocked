@@ -15,7 +15,21 @@ from typing import List, Optional
 MEMORY_KINDS = ("fact", "decision", "convention", "reference")
 SOURCE_KINDS = ("doc", "url", "ticket", "commit", "run", "message")
 LINK_RELATIONS = ("relates_to", "supersedes", "contradicts", "derived_from")
-EVENT_TYPES = ("memory.write", "memory.recall", "memory.reject")
+EVENT_TYPES = (
+    "memory.write",
+    "memory.recall",
+    "memory.reject",
+    "memory.update",
+    "memory.forget",
+)
+
+# Lifecycle states. A memory starts life as either a reviewed ``active`` fact or
+# an unreviewed ``candidate``, and can later be ``archived`` (kept for audit but
+# excluded from recall) or ``rejected`` (kept as a tombstone of a bad write).
+MEMORY_STATUSES = ("candidate", "active", "archived", "rejected")
+DEFAULT_STATUS = "active"
+# Statuses that the recall/context path surfaces to a model by default.
+RECALL_STATUSES = ("active",)
 
 
 @dataclass(frozen=True)
@@ -87,9 +101,13 @@ class Memory:
     tags: List[str] = field(default_factory=list)
     links: List[Link] = field(default_factory=list)
     confidence: float = 1.0
+    status: str = DEFAULT_STATUS
     # Assigned by the store on write; None until then.
     id: Optional[str] = None
     created_at: Optional[str] = None
+    # Updated by the store on any lifecycle change (status/confidence). None
+    # until the first mutation; serializers default it to ``created_at``.
+    updated_at: Optional[str] = None
 
     def __post_init__(self) -> None:
         if not self.title or not self.title.strip():
@@ -98,6 +116,8 @@ class Memory:
             raise ValueError("memory.body must be non-empty")
         if self.kind not in MEMORY_KINDS:
             raise ValueError(f"memory.kind must be one of {MEMORY_KINDS}")
+        if self.status not in MEMORY_STATUSES:
+            raise ValueError(f"memory.status must be one of {MEMORY_STATUSES}")
         if not 0.0 <= self.confidence <= 1.0:
             raise ValueError("memory.confidence must be in [0, 1]")
         # Normalize tags to lowercase, de-duplicated, order-preserving.

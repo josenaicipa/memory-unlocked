@@ -6,10 +6,12 @@ project's context bleed into another.
 
 It is installable today as a dependency-free Python package with:
 
-- a durable local JSONL store,
+- durable local JSONL and SQLite stores,
 - a practical CLI (`memory-unlocked`),
 - a dependency-free MCP stdio server (`memory-unlocked-mcp`),
-- audit events for writes, recalls, and rejections,
+- lifecycle/governance commands for candidate review, archival, and forgetting,
+- token-budgeted context assembly and offline recall/privacy evals,
+- audit events for writes, recalls, updates, forgets, and rejections,
 - tests and CI for the privacy/scope guarantees.
 
 The core stays deliberately small so teams can audit it, ship it locally, and
@@ -45,6 +47,13 @@ scope before anything reaches the model.
 ## Quickstart
 
 ```bash
+pipx install memory-unlocked
+# or: uv tool install memory-unlocked
+```
+
+From source:
+
+```bash
 git clone https://github.com/josenaicipa/memory-unlocked.git
 cd memory-unlocked
 python -m pip install -e '.[dev]'
@@ -61,9 +70,28 @@ memory-unlocked --path ./mem write \
   --body "Refund requests are enqueued and processed by a worker, not inline." \
   --source docs/refunds.md \
   --tags billing,architecture
-memory-unlocked --path ./mem recall \
-  --tenant acme --project billing --query refund
+memory-unlocked --path ./mem context \
+  --tenant acme --project billing --query refund --token-budget 200
 ```
+
+Review candidate memories and run governance/eval checks:
+
+```bash
+memory-unlocked --path ./mem write \
+  --tenant acme --project billing \
+  --title "Candidate fact" --body "Needs human approval." \
+  --source docs/review.md --status candidate
+memory-unlocked --path ./mem review --tenant acme --project billing
+memory-unlocked --path ./mem audit --json
+memory-unlocked eval examples/evalset/basic.json
+```
+
+Use SQLite for a more production-like local backend:
+
+```bash
+memory-unlocked --backend sqlite --path ./mem-sqlite init
+```
+
 
 Run the MCP server for an agent runner:
 
@@ -143,8 +171,10 @@ These are the defaults, not opt-ins:
 
 ## Documentation
 
-- [Install & CLI](docs/install.md) — package install, local JSONL store, CLI commands.
+- [Install & CLI](docs/install.md) — package install, JSONL/SQLite stores, CLI commands.
 - [Hermes / MCP](docs/hermes.md) — run the MCP server and bind it to a project scope.
+- [Threat model](docs/threat-model.md) — public security boundaries and residual risk.
+- [Release checklist](docs/release-checklist.md) — repeatable PyPI/release process.
 - [Architecture](docs/architecture.md) — components, data flow, scope policy.
 - [Privacy & redaction](docs/privacy-and-redaction.md) — what never to store and
   the write-review flow.

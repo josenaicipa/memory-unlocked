@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "memory-unlocked"
-version = "0.2.0"
+version = "0.3.0"
 description = "A privacy-first, scope-isolated local memory store for AI agents, with a CLI and an MCP server."
 readme = "README.md"
 requires-python = ">=3.9"
@@ -12,7 +12,7 @@ license = { text = "MIT" }
 keywords = ["ai", "agents", "memory", "privacy", "namespace", "mcp"]
 authors = [{ name = "Memory Unlocked contributors" }]
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",

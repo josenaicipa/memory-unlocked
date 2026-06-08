@@ -15,8 +15,9 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional
 
 from .assembler import AssemblerConfig, ContextAssembler
-from .models import Memory, Namespace, Source
+from .models import DEFAULT_STATUS, Memory, Namespace, Source
 from .policy import PolicyError
+from .ranking import estimate_tokens, find_duplicate_groups
 from .serialize import event_to_dict, memory_to_dict
 from .store import MemoryStore
 
@@ -42,10 +43,11 @@ def write_memory(
     kind: str = "fact",
     tags: Optional[Any] = None,
     confidence: float = 1.0,
+    status: str = DEFAULT_STATUS,
 ) -> Dict[str, Any]:
     """Build and store a memory.
 
-    Returns ``{"ok": True, "id": ...}`` on success, or
+    Returns ``{"ok": True, "id": ..., "status": ...}`` on success, or
     ``{"ok": False, "rejected": <reason>}`` if the gate or model validation
     refuses it. The offending content is never included in the result.
     """
@@ -58,6 +60,7 @@ def write_memory(
             kind=kind,
             tags=_split_tags(tags),
             confidence=confidence,
+            status=status,
         )
     except ValueError as exc:
         return {"ok": False, "rejected": "invalid_input", "detail": str(exc)}
@@ -67,7 +70,7 @@ def write_memory(
     except PolicyError as exc:
         return {"ok": False, "rejected": exc.reason}
 
-    return {"ok": True, "id": stored.id}
+    return {"ok": True, "id": stored.id, "status": stored.status}
 
 
 def recall(
@@ -87,13 +90,110 @@ def recall(
     }
 
 
-def list_memories(store: MemoryStore, namespace: Namespace) -> Dict[str, Any]:
-    """All memories in one scope.
+def build_context(
+    store: MemoryStore,
+    namespace: Namespace,
+    query: str = "",
+    token_budget: Optional[int] = None,
+    max_memories: Optional[int] = None,
+) -> Dict[str, Any]:
+    """Assemble a token-budgeted context block (the ``memory_context`` surface).
+
+    Distinct from :func:`recall`: this returns a single rendered block bounded by
+    an estimated ``token_budget`` plus accounting (estimated tokens used and which
+    memory ids were included), for callers that need to fit context into a model
+    window. ``recall`` returns the structured matches for programmatic use.
+    """
+    config = AssemblerConfig()
+    if max_memories:
+        config.max_memories = max_memories
+    if token_budget:
+        config.max_tokens = token_budget
+    assembler = ContextAssembler(store, config)
+    selected = assembler.select(namespace, query=query)
+    context = assembler.assemble(namespace, query=query, selected=selected)
+    return {
+        "context": context,
+        "estimated_tokens": estimate_tokens(context),
+        "token_budget": token_budget,
+        "memory_ids": [m.id for m in selected],
+        "matches": [memory_to_dict(m) for m in selected],
+    }
+
+
+def list_memories(
+    store: MemoryStore,
+    namespace: Namespace,
+    statuses: Optional[List[str]] = None,
+) -> Dict[str, Any]:
+    """All memories in one scope, optionally filtered by lifecycle status.
 
     This uses ``store.query`` so the listing is audited as a scope-local recall.
     """
-    memories = store.query(namespace)
+    memories = store.query(namespace, statuses=statuses)
     return {"memories": [memory_to_dict(m) for m in memories]}
+
+
+def set_memory_status(store: MemoryStore, memory_id: str, status: str) -> Dict[str, Any]:
+    """Transition a memory's lifecycle status (promote/archive/reject)."""
+    try:
+        memory = store.set_status(memory_id, status)
+    except KeyError:
+        return {"ok": False, "error": "not_found", "id": memory_id}
+    except ValueError as exc:
+        return {"ok": False, "error": "invalid_status", "detail": str(exc)}
+    return {"ok": True, "id": memory.id, "status": memory.status}
+
+
+def forget_memory(store: MemoryStore, memory_id: str) -> Dict[str, Any]:
+    """Permanently remove a memory by id."""
+    removed = store.forget(memory_id)
+    return {"ok": removed, "id": memory_id, "forgotten": removed}
+
+
+def audit(
+    store: MemoryStore,
+    namespace: Optional[Namespace] = None,
+    min_confidence: float = 0.5,
+    stale_before: Optional[str] = None,
+    dupe_threshold: float = 0.92,
+) -> Dict[str, Any]:
+    """Governance scan: stale, low-confidence, and duplicate memories.
+
+    Returns plain data with ids and titles only — never bodies — so an audit
+    report is safe to print or ship. ``stale_before`` is an ISO-8601 string;
+    any active/candidate memory created at or before it is flagged stale (the
+    caller computes the cutoff from a wall clock so this stays deterministic).
+    """
+    memories = [
+        m for m in store.all()
+        if namespace is None or m.namespace == namespace
+    ]
+
+    def _ref(m: Memory) -> Dict[str, Any]:
+        return {"id": m.id, "title": m.title, "namespace": m.namespace.as_key(),
+                "status": m.status, "confidence": m.confidence, "created_at": m.created_at}
+
+    low_confidence = [_ref(m) for m in memories if m.confidence < min_confidence]
+    stale = []
+    if stale_before is not None:
+        stale = [
+            _ref(m) for m in memories
+            if m.status in ("active", "candidate")
+            and (m.created_at or "") <= stale_before
+        ]
+    candidates = [_ref(m) for m in memories if m.status == "candidate"]
+
+    groups = find_duplicate_groups(memories, dupe_threshold)
+    duplicates = [[_ref(m) for m in group] for group in groups]
+
+    return {
+        "total": len(memories),
+        "low_confidence": low_confidence,
+        "stale": stale,
+        "candidates": candidates,
+        "duplicates": duplicates,
+    }
 
 
 def compute_stats(

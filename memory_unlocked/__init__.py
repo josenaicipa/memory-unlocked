@@ -17,6 +17,7 @@ The CLI lives in ``memory_unlocked.cli`` and the MCP server in
 from .assembler import AssemblerConfig, ContextAssembler
 from .models import Event, Link, Memory, Namespace, Source
 from .persistence import JsonlStore
+from .sqlite_store import SqliteStore
 from .policy import PolicyConfig, PolicyError, review
 from .serialize import (
     event_from_dict,
@@ -26,7 +27,7 @@ from .serialize import (
 )
 from .store import MemoryStore
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 __all__ = [
     "Memory",
@@ -36,6 +37,7 @@ __all__ = [
     "Namespace",
     "MemoryStore",
     "JsonlStore",
+    "SqliteStore",
     "ContextAssembler",
     "AssemblerConfig",
     "PolicyConfig",

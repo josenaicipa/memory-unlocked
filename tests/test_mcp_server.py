@@ -43,7 +43,7 @@ def test_initialize_returns_server_info(server):
 def test_tools_list_exposes_four_tools(server):
     resp = server.handle(_req("tools/list"))
     names = {t["name"] for t in resp["result"]["tools"]}
-    assert names == {"memory_write", "memory_recall", "memory_list", "memory_stats"}
+    assert names == {"memory_write", "memory_recall", "memory_context", "memory_list", "memory_stats"}
     for tool in resp["result"]["tools"]:
         assert "inputSchema" in tool
         # Namespace is injected server-side; never a model-controlled param.
@@ -59,10 +59,12 @@ def test_tools_call_write_then_recall(server):
             "body": "Processed by a worker.",
             "source": "docs/refunds.md",
             "tags": ["billing"],
+            "status": "active",
         },
     }))
     assert write["result"]["isError"] is False
     assert write["result"]["structuredContent"]["ok"] is True
+    assert write["result"]["structuredContent"]["status"] == "active"
 
     recall = server.handle(_req("tools/call", {
         "name": "memory_recall",
