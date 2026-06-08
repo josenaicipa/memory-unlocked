@@ -11,6 +11,7 @@ It is installable today as a dependency-free Python package with:
 - a dependency-free MCP stdio server (`memory-unlocked-mcp`),
 - lifecycle/governance commands for candidate review, archival, and forgetting,
 - token-budgeted context assembly and offline recall/privacy evals,
+- a deterministic semantic graph layer for typed agent context,
 - audit events for writes, recalls, updates, forgets, and rejections,
 - tests and CI for the privacy/scope guarantees.
 
@@ -90,6 +91,18 @@ Use SQLite for a more production-like local backend:
 
 ```bash
 memory-unlocked --backend sqlite --path ./mem-sqlite init
+```
+
+Extract semantic graph context:
+
+```bash
+memory-unlocked --path ./mem write \
+  --tenant acme --project billing \
+  --title "Graph demo" \
+  --body "Billing service owns refunds. Worker depends on Redis." \
+  --source docs/graph.md
+memory-unlocked --path ./mem graph-context \
+  --tenant acme --project billing --token-budget 200
 ```
 
 
@@ -173,6 +186,7 @@ These are the defaults, not opt-ins:
 
 - [Install & CLI](docs/install.md) — package install, JSONL/SQLite stores, CLI commands.
 - [Hermes / MCP](docs/hermes.md) — run the MCP server and bind it to a project scope.
+- [Semantic graph](docs/graph.md) — typed relation extraction and graph context.
 - [Threat model](docs/threat-model.md) — public security boundaries and residual risk.
 - [Release checklist](docs/release-checklist.md) — repeatable PyPI/release process.
 - [Architecture](docs/architecture.md) — components, data flow, scope policy.

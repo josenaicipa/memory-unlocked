@@ -27,6 +27,7 @@ If your Hermes version uses config files instead of `hermes mcp add`, use the eq
 - `memory_write` — proposes a durable memory for the bound scope. Defaults to `candidate` so model-originated memories can be reviewed before recall; pass `status: "active"` only for trusted automations.
 - `memory_recall` — returns structured scope-filtered active matches and context.
 - `memory_context` — returns a token-budgeted prompt context block.
+- `memory_graph_context` — returns deterministic semantic graph relations for the bound scope.
 - `memory_list` — lists scope-local memories.
 - `memory_stats` — counts memories and events for the bound scope.
 

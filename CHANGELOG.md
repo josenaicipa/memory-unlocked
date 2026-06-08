@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.3.1 - Semantic Graph Layer
+
+### Added
+
+- Deterministic public-safe semantic graph extraction.
+- Relation vocabulary: `owns`, `routes_to`, `separate_from`, `uses_provider`, `fallback_provider`, `deploys_to`, `source_of_truth_for`, `sensitive_write`, `depends_on`, `supersedes`.
+- Spanish/Spanglish extraction patterns including `usa`, `depende de`, `fuente de verdad`, `no mezclar`, `fallback a`.
+- Nearest-subject fallback binding for `fallback_provider`.
+- CLI commands: `graph` and `graph-context`.
+- MCP tool: `memory_graph_context`.
+- Graph docs and public example.
+
+### Security
+
+- Graph reports/context omit memory bodies.
+- Entity/relation names pass secret/PII filters before emission.
+- Graph extraction remains namespace-scoped and deterministic.
+
 ## 0.3.0 - Productization Preview
 
 Memory Unlocked moves from an installable skeleton to a product-grade local agent memory toolkit.

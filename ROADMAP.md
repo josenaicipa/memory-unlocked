@@ -17,6 +17,7 @@ Memory Unlocked is built as a safe, portable memory layer for MCP-compatible AI 
 - [ ] pluggable embedding/ranking providers with offline default
 - [ ] encrypted-at-rest local option
 - [ ] signed export/import bundles
+- [ ] visual graph UI on top of the deterministic semantic graph
 - [ ] richer duplicate merge workflow
 - [ ] docs site with screenshots/video
 

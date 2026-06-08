@@ -5,13 +5,14 @@ Run it with::
     python -m memory_unlocked.mcp_server
 
 It speaks JSON-RPC 2.0 over newline-delimited stdio — the MCP stdio transport —
-and exposes four tools to an agent runner such as Hermes or Claude:
+and exposes these tools to an agent runner such as Hermes or Claude:
 
-    memory_write   propose a durable, non-sensitive fact
-    memory_recall   recall scope-filtered structured matches for the current project
-    memory_context  build a token-budgeted prompt context block
-    memory_list     list the memories in the current scope
-    memory_stats    counts of memories and audit events
+    memory_write          propose a durable, non-sensitive fact
+    memory_recall          recall scope-filtered structured matches for the current project
+    memory_context         build a token-budgeted prompt context block
+    memory_graph_context   render a compact, token-budgeted semantic-graph block
+    memory_list            list the memories in the current scope
+    memory_stats           counts of memories and audit events
 
 The security model from the docs is enforced here: **the namespace is never a
 tool argument.** The runner picks the scope by launching the server with
@@ -112,6 +113,22 @@ def build_tools() -> List[Dict[str, Any]]:
             },
         },
         {
+            "name": "memory_graph_context",
+            "description": (
+                "Render a compact, token-budgeted semantic-graph block for the "
+                "current project scope: typed relations (owns, uses_provider, "
+                "depends_on, etc.) between entities, with co-occurrences as a "
+                "low-priority tail. No bodies, secrets, or PII."
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Narrow the graph to matching memories."},
+                    "token_budget": {"type": "integer", "description": "Approximate max tokens."},
+                },
+            },
+        },
+        {
             "name": "memory_list",
             "description": "List all memories stored in the current project scope.",
             "inputSchema": {"type": "object", "properties": {}},
@@ -184,6 +201,8 @@ class MemoryMcpServer:
                 return self._tool_recall(arguments)
             if name == "memory_context":
                 return self._tool_context(arguments)
+            if name == "memory_graph_context":
+                return self._tool_graph_context(arguments)
             if name == "memory_list":
                 return self._tool_list()
             if name == "memory_stats":
@@ -229,6 +248,16 @@ class MemoryMcpServer:
             max_memories=args.get("max_memories"),
         )
         text = result["context"] or "(no matching memories)"
+        return self._tool_result(text, result)
+
+    def _tool_graph_context(self, args: Dict[str, Any]) -> Dict[str, Any]:
+        result = ops.graph_context(
+            self._store,
+            self._namespace,
+            query=args.get("query", ""),
+            token_budget=args.get("token_budget"),
+        )
+        text = result["context"] or "(no semantic relations in scope)"
         return self._tool_result(text, result)
 
     def _tool_list(self) -> Dict[str, Any]:

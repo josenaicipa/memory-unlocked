@@ -15,11 +15,17 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional
 
 from .assembler import AssemblerConfig, ContextAssembler
+from .graph import GRAPH_STATUSES, SEMANTIC_RELATIONS, Graph, extract_graph
 from .models import DEFAULT_STATUS, Memory, Namespace, Source
 from .policy import PolicyError
 from .ranking import estimate_tokens, find_duplicate_groups
 from .serialize import event_to_dict, memory_to_dict
 from .store import MemoryStore
+
+# A single memory emitting more relations than this is flagged as noisy.
+GRAPH_NOISY_THRESHOLD = 8
+# Relations below this confidence are flagged as weak.
+GRAPH_WEAK_CONFIDENCE = 0.4
 
 
 def _split_tags(tags: Optional[Any]) -> List[str]:
@@ -118,6 +124,177 @@ def build_context(
         "token_budget": token_budget,
         "memory_ids": [m.id for m in selected],
         "matches": [memory_to_dict(m) for m in selected],
+    }
+
+
+def _graph_for(store: MemoryStore, namespace: Namespace, query: str) -> Graph:
+    """Extract the semantic graph for a scope, optionally narrowed by ``query``.
+
+    Scope is enforced by ``store.query`` (active memories only); the graph layer
+    re-checks each memory's namespace as defense in depth. A substring ``query``
+    narrows which memories feed the graph, the same way recall does.
+    """
+    memories = store.query(
+        namespace,
+        text=query or None,
+        statuses=GRAPH_STATUSES,
+        match=bool(query),
+    )
+    return extract_graph(memories, namespace)
+
+
+def _relation_view(rel) -> Dict[str, Any]:
+    """JSON-safe view of one relation. Carries ids/titles/refs, never a body."""
+    return {
+        "subject": rel.subject,
+        "subject_kind": rel.subject_kind,
+        "object": rel.object,
+        "object_kind": rel.object_kind,
+        "confidence": rel.confidence,
+        "source_memory_id": rel.source_memory_id,
+        "source_title": rel.source_title,
+        "source_ref": rel.source_ref,
+        "extraction_rule": rel.extraction_rule,
+    }
+
+
+def graph_report(
+    store: MemoryStore,
+    namespace: Namespace,
+    query: str = "",
+) -> Dict[str, Any]:
+    """Structured semantic-graph report for a scope.
+
+    Returns entities, semantic relations grouped by type, co-occurrences kept
+    separately, and warnings (noisy memories, weak edges, duplicate triples).
+    Like :func:`audit`, it carries only ids/titles/refs — never memory bodies —
+    so the report is safe to print or ship. Secret/PII-shaped names are dropped
+    at extraction time, so they can never appear here.
+    """
+    graph = _graph_for(store, namespace, query)
+
+    grouped: Dict[str, List[Dict[str, Any]]] = {rel: [] for rel in SEMANTIC_RELATIONS}
+    for rel in graph.relations:
+        grouped.setdefault(rel.rel, []).append(_relation_view(rel))
+    # Drop empty buckets so the report only lists relations that occur.
+    semantic_relations = {rel: views for rel, views in grouped.items() if views}
+
+    co_occurs = [
+        {"a": rel.subject, "b": rel.object,
+         "source_memory_id": rel.source_memory_id, "source_title": rel.source_title}
+        for rel in graph.co_occurs
+    ]
+
+    entities = [
+        {"kind": e.kind, "name": e.name, "confidence": e.confidence,
+         "source_memory_id": e.source_memory_id, "source_title": e.source_title}
+        for e in graph.entities
+    ]
+
+    return {
+        "namespace": namespace.as_key(),
+        "query": query,
+        "entities": entities,
+        "semantic_relations": semantic_relations,
+        "co_occurs": co_occurs,
+        "warnings": _graph_warnings(graph),
+        "counts": {
+            "entities": len(graph.entities),
+            "relations": len(graph.relations),
+            "co_occurs": len(graph.co_occurs),
+        },
+    }
+
+
+def _graph_warnings(graph: Graph) -> List[Dict[str, Any]]:
+    """Deterministic governance warnings over an extracted graph."""
+    warnings: List[Dict[str, Any]] = []
+
+    # Noisy: a single memory contributing an unusually large number of relations.
+    per_memory: Dict[str, int] = {}
+    for rel in graph.relations:
+        key = rel.source_memory_id or ""
+        per_memory[key] = per_memory.get(key, 0) + 1
+    for memory_id, count in sorted(per_memory.items()):
+        if count > GRAPH_NOISY_THRESHOLD:
+            warnings.append({"kind": "noisy", "source_memory_id": memory_id, "relations": count})
+
+    # Weak: low-confidence semantic edges.
+    weak = sum(1 for rel in graph.relations if rel.confidence < GRAPH_WEAK_CONFIDENCE)
+    if weak:
+        warnings.append({"kind": "weak", "count": weak})
+
+    # Duplicates: the same (rel, subject, object) asserted by more than one memory.
+    seen: Dict[tuple, int] = {}
+    for rel in graph.relations:
+        triple = (rel.rel, rel.subject, rel.object)
+        seen[triple] = seen.get(triple, 0) + 1
+    # Note: extract_graph de-dupes within a namespace, so duplicates surface only
+    # when the same triple is independently asserted; report any that repeat.
+    duplicates = {t: c for t, c in seen.items() if c > 1}
+    for (rel, subject, obj), count in sorted(duplicates.items()):
+        warnings.append({"kind": "duplicate", "relation": rel,
+                         "subject": subject, "object": obj, "count": count})
+
+    return warnings
+
+
+def graph_context(
+    store: MemoryStore,
+    namespace: Namespace,
+    query: str = "",
+    token_budget: Optional[int] = None,
+) -> Dict[str, Any]:
+    """Render a compact, token-budgeted semantic-graph context block.
+
+    Semantic relations are rendered first (in vocabulary priority order), then
+    co-occurrences as a low-priority tail. The block is bounded by an estimated
+    ``token_budget`` and carries no bodies, secrets, or PII — only the typed
+    edges and the entities they connect.
+    """
+    graph = _graph_for(store, namespace, query)
+    header = f"# Memory graph — {namespace.as_key()}"
+    lines: List[str] = [header]
+    used = estimate_tokens(header)
+
+    def _emit(text: str) -> bool:
+        nonlocal used
+        tokens = estimate_tokens(text)
+        if token_budget is not None and used + tokens > token_budget:
+            return False
+        lines.append(text)
+        used += tokens
+        return True
+
+    rendered = 0
+    by_rel: Dict[str, List] = {rel: [] for rel in SEMANTIC_RELATIONS}
+    for rel in graph.relations:
+        by_rel.setdefault(rel.rel, []).append(rel)
+
+    stop = False
+    for rel_name in SEMANTIC_RELATIONS:
+        for rel in by_rel.get(rel_name, []):
+            if not _emit(f"- {rel.subject} --{rel_name}--> {rel.object}"):
+                stop = True
+                break
+            rendered += 1
+        if stop:
+            break
+
+    if not stop:
+        for rel in graph.co_occurs:
+            if not _emit(f"- {rel.subject} ~ {rel.object} (co_occurs)"):
+                break
+            rendered += 1
+
+    context = "\n".join(lines).strip() if rendered else ""
+    return {
+        "context": context,
+        "estimated_tokens": estimate_tokens(context),
+        "token_budget": token_budget,
+        "relations_rendered": rendered,
+        "relation_count": len(graph.relations),
+        "entity_count": len(graph.entities),
     }
 
 

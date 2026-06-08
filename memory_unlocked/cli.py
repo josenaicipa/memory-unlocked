@@ -239,6 +239,41 @@ def _cmd_review(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def _cmd_graph(args: argparse.Namespace) -> int:
+    store = _open_store(args)
+    result = ops.graph_report(store, _namespace(args), query=args.query)
+    if args.json:
+        print(json.dumps(result))
+    else:
+        print(f"semantic graph — {result['namespace']}")
+        print(f"entities: {result['counts']['entities']}")
+        print(f"relations: {result['counts']['relations']}")
+        print(f"co_occurs: {result['counts']['co_occurs']}")
+        for rel, views in result["semantic_relations"].items():
+            print(f"  {rel}:")
+            for v in views:
+                print(f"    {v['subject']} -> {v['object']}")
+        if result["warnings"]:
+            print("warnings:")
+            for w in result["warnings"]:
+                print(f"  - {w}")
+    return EXIT_OK
+
+
+def _cmd_graph_context(args: argparse.Namespace) -> int:
+    store = _open_store(args)
+    result = ops.graph_context(
+        store, _namespace(args), query=args.query, token_budget=args.token_budget,
+    )
+    if args.json:
+        print(json.dumps(result))
+    elif result["context"]:
+        print(result["context"])
+    else:
+        print("(no semantic relations in scope)")
+    return EXIT_OK
+
+
 def _cmd_eval(args: argparse.Namespace) -> int:
     data = evaluation.load_evalset(args.evalset)
     result = evaluation.run_evalset(data)
@@ -346,6 +381,21 @@ def _build_parser() -> argparse.ArgumentParser:
     p_review.add_argument("--min-confidence", type=float, default=0.5)
     p_review.add_argument("--json", action="store_true")
     p_review.set_defaults(func=_cmd_review)
+
+    p_graph = sub.add_parser("graph", help="extract a public-safe semantic graph for a scope")
+    add_ns(p_graph)
+    p_graph.add_argument("--query", default="", help="narrow the graph to matching memories")
+    p_graph.add_argument("--json", action="store_true")
+    p_graph.set_defaults(func=_cmd_graph)
+
+    p_graph_ctx = sub.add_parser(
+        "graph-context", help="render a compact, token-budgeted semantic-graph block")
+    add_ns(p_graph_ctx)
+    p_graph_ctx.add_argument("--query", default="")
+    p_graph_ctx.add_argument("--token-budget", type=int, default=None,
+                             help="estimated token budget for the graph block")
+    p_graph_ctx.add_argument("--json", action="store_true")
+    p_graph_ctx.set_defaults(func=_cmd_graph_context)
 
     p_eval = sub.add_parser("eval", help="run an offline recall/privacy evalset")
     p_eval.add_argument("evalset")
