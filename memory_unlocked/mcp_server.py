@@ -129,6 +129,33 @@ def build_tools() -> List[Dict[str, Any]]:
             },
         },
         {
+            "name": "memory_graph_temporal",
+            "description": "Read-only temporal relation report for the current project scope; no raw ids/source refs.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string"},
+                    "current_only": {"type": "boolean"},
+                },
+            },
+        },
+        {
+            "name": "memory_graph_lineage",
+            "description": "Redacted relation evidence and source-memory lineage handles for the current scope.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {"query": {"type": "string"}},
+            },
+        },
+        {
+            "name": "memory_graph_effective_backend",
+            "description": "Public-safe effective graph backend read for scoped agent consumers; read-only.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {"query": {"type": "string"}},
+            },
+        },
+        {
             "name": "memory_list",
             "description": "List all memories stored in the current project scope.",
             "inputSchema": {"type": "object", "properties": {}},
@@ -203,6 +230,12 @@ class MemoryMcpServer:
                 return self._tool_context(arguments)
             if name == "memory_graph_context":
                 return self._tool_graph_context(arguments)
+            if name == "memory_graph_temporal":
+                return self._tool_graph_temporal(arguments)
+            if name == "memory_graph_lineage":
+                return self._tool_graph_lineage(arguments)
+            if name == "memory_graph_effective_backend":
+                return self._tool_graph_effective_backend(arguments)
             if name == "memory_list":
                 return self._tool_list()
             if name == "memory_stats":
@@ -259,6 +292,31 @@ class MemoryMcpServer:
         )
         text = result["context"] or "(no semantic relations in scope)"
         return self._tool_result(text, result)
+
+    def _tool_graph_temporal(self, args: Dict[str, Any]) -> Dict[str, Any]:
+        result = ops.graph_temporal_report(
+            self._store,
+            self._namespace,
+            query=args.get("query", ""),
+            current_only=bool(args.get("current_only", False)),
+        )
+        return self._tool_result(json.dumps(result), result)
+
+    def _tool_graph_lineage(self, args: Dict[str, Any]) -> Dict[str, Any]:
+        result = ops.graph_lineage_report(
+            self._store,
+            self._namespace,
+            query=args.get("query", ""),
+        )
+        return self._tool_result(json.dumps(result), result)
+
+    def _tool_graph_effective_backend(self, args: Dict[str, Any]) -> Dict[str, Any]:
+        result = ops.graph_effective_backend(
+            self._store,
+            self._namespace,
+            query=args.get("query", ""),
+        )
+        return self._tool_result(json.dumps(result), result)
 
     def _tool_list(self) -> Dict[str, Any]:
         result = ops.list_memories(self._store, self._namespace)

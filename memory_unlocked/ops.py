@@ -12,12 +12,13 @@ stdio; the transports own I/O.
 
 from __future__ import annotations
 
+from collections import defaultdict
 from typing import Any, Dict, List, Optional
 
 from .assembler import AssemblerConfig, ContextAssembler
 from .graph import GRAPH_STATUSES, SEMANTIC_RELATIONS, Graph, extract_graph
 from .models import DEFAULT_STATUS, Memory, Namespace, Source
-from .policy import PolicyError
+from .policy import PolicyError, redact_if_secret, redact_pii
 from .ranking import estimate_tokens, find_duplicate_groups
 from .serialize import event_to_dict, memory_to_dict
 from .store import MemoryStore
@@ -204,6 +205,188 @@ def graph_report(
             "co_occurs": len(graph.co_occurs),
         },
     }
+
+
+def _safe_text(text: str | None, limit: int = 160) -> str:
+    """Redact PII/secret-shaped strings and cap output for public reports."""
+    cleaned = redact_if_secret(redact_pii(text or ""))
+    return cleaned[:limit]
+
+
+def _handle_map(ids: List[str]) -> Dict[str, str]:
+    """Map raw ids to stable local handles for one response."""
+    return {raw: f"m{idx + 1}" for idx, raw in enumerate(dict.fromkeys(i for i in ids if i))}
+
+
+def graph_temporal_report(store: MemoryStore, namespace: Namespace, query: str = "", current_only: bool = False) -> Dict[str, Any]:
+    """Read-only temporal view of scoped semantic relations.
+
+    Public stores do not persist relation rows separately, so relation validity is
+    derived from the source memory ``created_at`` timestamp. Output intentionally
+    avoids raw memory ids and source refs.
+    """
+    graph = _graph_for(store, namespace, query)
+    grouped: Dict[tuple, List[Any]] = defaultdict(list)
+    for rel in graph.relations:
+        grouped[(rel.rel, rel.subject, rel.object)].append(rel)
+
+    rows: List[Dict[str, Any]] = []
+    for rels in grouped.values():
+        ordered = sorted(rels, key=lambda r: (r.source_memory_id or "", r.source_title or ""))
+        # With de-duplicated triples this is normally one row, but the shape is
+        # temporal-safe if a future store preserves multiple observations.
+        for idx, rel in enumerate(ordered):
+            next_rel = ordered[idx + 1] if idx + 1 < len(ordered) else None
+            current = next_rel is None
+            if current_only and not current:
+                continue
+            rows.append({
+                "handle": f"r{len(rows) + 1}",
+                "relation": rel.rel,
+                "subject": _safe_text(rel.subject),
+                "object": _safe_text(rel.object),
+                "valid_from": _created_at_for(store, namespace, rel.source_memory_id),
+                "valid_until": _created_at_for(store, namespace, next_rel.source_memory_id) if next_rel else None,
+                "current": current,
+                "confidence": rel.confidence,
+            })
+    return {
+        "command": "memory_graph_temporal_report",
+        "namespace": namespace.as_key(),
+        "query": query,
+        "current_only": current_only,
+        "relations": rows,
+        "counts": {"relations": len(rows)},
+        "dry_run": True,
+        "writes_performed": 0,
+    }
+
+
+def graph_lineage_report(store: MemoryStore, namespace: Namespace, query: str = "") -> Dict[str, Any]:
+    """Redacted relation evidence and source-memory lineage handles.
+
+    Unlike ``graph_report``, this surface is designed for shared/public MCP
+    consumers: no raw memory ids, source refs, URLs, or bodies are emitted.
+    """
+    graph = _graph_for(store, namespace, query)
+    memory_ids = [rel.source_memory_id for rel in graph.relations if rel.source_memory_id]
+    handles = _handle_map(memory_ids)
+    memories = {m.id: m for m in store.query(namespace, statuses=GRAPH_STATUSES) if m.id in handles}
+
+    relations = []
+    for idx, rel in enumerate(graph.relations):
+        relations.append({
+            "handle": f"r{idx + 1}",
+            "relation": rel.rel,
+            "subject": _safe_text(rel.subject),
+            "object": _safe_text(rel.object),
+            "confidence": rel.confidence,
+            "memory_handle": handles.get(rel.source_memory_id or ""),
+            "extraction_rule": _safe_text(rel.extraction_rule, 80),
+        })
+
+    lineage = []
+    for raw_id, handle in handles.items():
+        mem = memories.get(raw_id)
+        if mem is None:
+            continue
+        lineage.append({
+            "handle": handle,
+            "title": _safe_text(mem.title),
+            "kind": mem.kind,
+            "status": mem.status,
+            "created_at": mem.created_at,
+            "updated_at": mem.updated_at or mem.created_at,
+            "link_counts": _link_counts(mem),
+        })
+
+    return {
+        "command": "memory_graph_lineage",
+        "namespace": namespace.as_key(),
+        "query": query,
+        "relation_evidence": relations,
+        "memory_lineage": lineage,
+        "counts": {"relations": len(relations), "memories": len(lineage)},
+        "dry_run": True,
+        "writes_performed": 0,
+    }
+
+
+def graph_effective_backend(store: MemoryStore, namespace: Namespace, query: str = "") -> Dict[str, Any]:
+    """Public-safe effective backend read for MCP/agent consumers.
+
+    Memory Unlocked is already the canonical local backend in the public package;
+    this mirrors the private effective-backend contract without mentioning or
+    depending on any private legacy graph infrastructure.
+    """
+    graph = _graph_for(store, namespace, query)
+    graph_payload = {
+        "nodes": [{"id": f"n{idx + 1}", "kind": e.kind, "name": _safe_text(e.name)} for idx, e in enumerate(graph.entities)],
+        "edges": [
+            {
+                "id": f"e{idx + 1}",
+                "source": _safe_text(rel.subject),
+                "target": _safe_text(rel.object),
+                "relation": rel.rel,
+                "confidence": rel.confidence,
+            }
+            for idx, rel in enumerate(graph.relations)
+        ],
+    }
+    return {
+        "command": "memory_graph_effective_backend",
+        "version": "public-1.0",
+        "effective_backend": "memory_unlocked",
+        "cutover_ready": True,
+        "memory_unlocked_canonical": True,
+        "legacy_backend_retained": False,
+        "dry_run": True,
+        "writes_performed": 0,
+        "blockers": [],
+        "warnings": _safe_graph_warnings(graph),
+        "namespace": namespace.as_key(),
+        "query": query,
+        "node_count": len(graph_payload["nodes"]),
+        "edge_count": len(graph_payload["edges"]),
+        "graph": graph_payload,
+    }
+
+
+def _created_at_for(store: MemoryStore, namespace: Namespace, memory_id: str | None) -> str | None:
+    if not memory_id:
+        return None
+    for mem in store.query(namespace, statuses=GRAPH_STATUSES):
+        if mem.id == memory_id:
+            return mem.created_at
+    return None
+
+
+def _link_counts(memory: Memory) -> Dict[str, int]:
+    counts: Dict[str, int] = {}
+    for link in memory.links:
+        counts[link.rel] = counts.get(link.rel, 0) + 1
+    return counts
+
+
+def _safe_graph_warnings(graph: Graph) -> List[Dict[str, Any]]:
+    """Warnings without raw memory ids or provenance for public agent reads."""
+    raw = _graph_warnings(graph)
+    safe: List[Dict[str, Any]] = []
+    for warning in raw:
+        kind = warning.get("kind")
+        if kind == "noisy":
+            safe.append({"kind": "noisy", "relations": int(warning.get("relations", 0) or 0)})
+        elif kind == "duplicate":
+            safe.append({
+                "kind": "duplicate",
+                "relation": _safe_text(str(warning.get("relation", "")), 80),
+                "subject": _safe_text(str(warning.get("subject", "")), 80),
+                "object": _safe_text(str(warning.get("object", "")), 80),
+                "count": int(warning.get("count", 0) or 0),
+            })
+        else:
+            safe.append({k: v for k, v in warning.items() if k != "source_memory_id"})
+    return safe
 
 
 def _graph_warnings(graph: Graph) -> List[Dict[str, Any]]:

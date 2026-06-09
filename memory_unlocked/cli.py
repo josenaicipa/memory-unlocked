@@ -274,6 +274,29 @@ def _cmd_graph_context(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def _cmd_graph_temporal(args: argparse.Namespace) -> int:
+    store = _open_store(args)
+    result = ops.graph_temporal_report(
+        store, _namespace(args), query=args.query, current_only=args.current_only,
+    )
+    print(json.dumps(result) if args.json else json.dumps(result, indent=2))
+    return EXIT_OK
+
+
+def _cmd_graph_lineage(args: argparse.Namespace) -> int:
+    store = _open_store(args)
+    result = ops.graph_lineage_report(store, _namespace(args), query=args.query)
+    print(json.dumps(result) if args.json else json.dumps(result, indent=2))
+    return EXIT_OK
+
+
+def _cmd_graph_effective_backend(args: argparse.Namespace) -> int:
+    store = _open_store(args)
+    result = ops.graph_effective_backend(store, _namespace(args), query=args.query)
+    print(json.dumps(result) if args.json else json.dumps(result, indent=2))
+    return EXIT_OK
+
+
 def _cmd_eval(args: argparse.Namespace) -> int:
     data = evaluation.load_evalset(args.evalset)
     result = evaluation.run_evalset(data)
@@ -396,6 +419,28 @@ def _build_parser() -> argparse.ArgumentParser:
                              help="estimated token budget for the graph block")
     p_graph_ctx.add_argument("--json", action="store_true")
     p_graph_ctx.set_defaults(func=_cmd_graph_context)
+
+    p_graph_temporal = sub.add_parser(
+        "graph-temporal", help="public-safe temporal view of scoped semantic relations")
+    add_ns(p_graph_temporal)
+    p_graph_temporal.add_argument("--query", default="")
+    p_graph_temporal.add_argument("--current-only", action="store_true")
+    p_graph_temporal.add_argument("--json", action="store_true")
+    p_graph_temporal.set_defaults(func=_cmd_graph_temporal)
+
+    p_graph_lineage = sub.add_parser(
+        "graph-lineage", help="redacted relation evidence and lineage handles")
+    add_ns(p_graph_lineage)
+    p_graph_lineage.add_argument("--query", default="")
+    p_graph_lineage.add_argument("--json", action="store_true")
+    p_graph_lineage.set_defaults(func=_cmd_graph_lineage)
+
+    p_graph_backend = sub.add_parser(
+        "graph-effective-backend", help="read-only public-safe effective graph backend payload")
+    add_ns(p_graph_backend)
+    p_graph_backend.add_argument("--query", default="")
+    p_graph_backend.add_argument("--json", action="store_true")
+    p_graph_backend.set_defaults(func=_cmd_graph_effective_backend)
 
     p_eval = sub.add_parser("eval", help="run an offline recall/privacy evalset")
     p_eval.add_argument("evalset")

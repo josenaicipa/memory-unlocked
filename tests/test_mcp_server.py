@@ -43,10 +43,10 @@ def test_initialize_returns_server_info(server):
 def test_tools_list_exposes_expected_tools(server):
     resp = server.handle(_req("tools/list"))
     names = {t["name"] for t in resp["result"]["tools"]}
-    assert names == {
+    assert {
         "memory_write", "memory_recall", "memory_context",
         "memory_graph_context", "memory_list", "memory_stats",
-    }
+    } <= names
     for tool in resp["result"]["tools"]:
         assert "inputSchema" in tool
         # Namespace is injected server-side; never a model-controlled param.

@@ -28,6 +28,9 @@ If your Hermes version uses config files instead of `hermes mcp add`, use the eq
 - `memory_recall` — returns structured scope-filtered active matches and context.
 - `memory_context` — returns a token-budgeted prompt context block.
 - `memory_graph_context` — returns deterministic semantic graph relations for the bound scope.
+- `memory_graph_temporal` — read-only temporal relation report derived from scoped memory timestamps.
+- `memory_graph_lineage` — redacted relation evidence + lineage handles; no raw ids/source refs/bodies.
+- `memory_graph_effective_backend` — public-safe effective backend payload for scoped graph readers (`effective_backend=memory_unlocked`).
 - `memory_list` — lists scope-local memories.
 - `memory_stats` — counts memories and events for the bound scope.
 

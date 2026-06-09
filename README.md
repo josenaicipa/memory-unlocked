@@ -93,7 +93,7 @@ Use SQLite for a more production-like local backend:
 memory-unlocked --backend sqlite --path ./mem-sqlite init
 ```
 
-Extract semantic graph context:
+Extract semantic graph context and the public-safe graph reports:
 
 ```bash
 memory-unlocked --path ./mem write \
@@ -103,7 +103,19 @@ memory-unlocked --path ./mem write \
   --source docs/graph.md
 memory-unlocked --path ./mem graph-context \
   --tenant acme --project billing --token-budget 200
+memory-unlocked --path ./mem graph-temporal \
+  --tenant acme --project billing --json
+memory-unlocked --path ./mem graph-lineage \
+  --tenant acme --project billing --json
+memory-unlocked --path ./mem graph-effective-backend \
+  --tenant acme --project billing --json
 ```
+
+The extra graph reports are read-only and public-safe: `graph-lineage` emits
+opaque handles instead of raw memory ids/source refs, `graph-temporal` derives
+relation validity from source-memory timestamps, and `graph-effective-backend`
+returns the scoped graph as the canonical `memory_unlocked` backend payload for
+agent/MCP consumers.
 
 
 Run the MCP server for an agent runner:

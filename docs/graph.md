@@ -1,6 +1,6 @@
 # Semantic Graph
 
-Memory Unlocked v0.3.1 adds a small, deterministic semantic graph layer over stored memories.
+Memory Unlocked v0.3.2 includes a small, deterministic semantic graph layer over stored memories plus public-safe temporal, lineage, and effective-backend graph reports.
 
 It is **not** a visual graph UI yet. It is an agent-facing backend feature: turn stable memory prose into compact, typed relations that can be recalled safely.
 
@@ -63,15 +63,35 @@ memory-unlocked --path ./.memory graph \
 
 memory-unlocked --path ./.memory graph-context \
   --tenant acme --project demo --token-budget 200
+
+memory-unlocked --path ./.memory graph-temporal \
+  --tenant acme --project demo --json
+
+memory-unlocked --path ./.memory graph-lineage \
+  --tenant acme --project demo --json
+
+memory-unlocked --path ./.memory graph-effective-backend \
+  --tenant acme --project demo --json
 ```
+
+## Public-safe graph report surfaces
+
+- `graph-temporal` / `memory_graph_temporal` — current/historical relation rows using the source memory timestamp as `valid_from`; no raw ids or source refs.
+- `graph-lineage` / `memory_graph_lineage` — relation evidence and source-memory lineage as opaque handles (`r1`, `m1`) with PII/secret redaction.
+- `graph-effective-backend` / `memory_graph_effective_backend` — scoped graph payload for agent readers with `effective_backend=memory_unlocked`, `dry_run=true`, and `writes_performed=0`.
+
+These are deliberately read-only. They are safe to expose over the MCP stdio server because the namespace is still bound by the runtime, not by the model.
 
 ## MCP
 
 The MCP server exposes:
 
 - `memory_graph_context`
+- `memory_graph_temporal`
+- `memory_graph_lineage`
+- `memory_graph_effective_backend`
 
-It returns a compact, token-budgeted semantic graph context block for the runtime-bound namespace.
+It returns compact, public-safe semantic graph data for the runtime-bound namespace.
 
 ## Safety model
 
