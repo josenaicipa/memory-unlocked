@@ -7,7 +7,11 @@ import json
 import pytest
 
 from memory_unlocked import Namespace
-from memory_unlocked.mcp_server import MemoryMcpServer
+from memory_unlocked.mcp_server import (
+    LATEST_PROTOCOL_VERSION,
+    SUPPORTED_PROTOCOL_VERSIONS,
+    MemoryMcpServer,
+)
 from memory_unlocked.persistence import JsonlStore
 
 NS = Namespace("acme", "billing")
@@ -38,6 +42,19 @@ def test_initialize_returns_server_info(server):
     assert "protocolVersion" in resp["result"]
     assert resp["result"]["serverInfo"]["name"]
     assert "tools" in resp["result"]["capabilities"]
+
+
+@pytest.mark.parametrize("protocol_version", SUPPORTED_PROTOCOL_VERSIONS)
+def test_initialize_negotiates_supported_protocol_versions(server, protocol_version):
+    resp = server.handle(_req("initialize", {"protocolVersion": protocol_version}))
+    assert resp["result"]["protocolVersion"] == protocol_version
+
+
+def test_initialize_uses_latest_protocol_for_unknown_or_missing_client_version(server):
+    unknown = server.handle(_req("initialize", {"protocolVersion": "2099-01-01"}))
+    missing = server.handle(_req("initialize", {}))
+    assert unknown["result"]["protocolVersion"] == LATEST_PROTOCOL_VERSION
+    assert missing["result"]["protocolVersion"] == LATEST_PROTOCOL_VERSION
 
 
 def test_tools_list_exposes_expected_tools(server):
@@ -117,6 +134,23 @@ def test_unknown_method_returns_error(server):
 def test_unknown_tool_is_error_result(server):
     resp = server.handle(_req("tools/call", {"name": "nope", "arguments": {}}))
     assert resp["result"]["isError"] is True
+
+
+def test_internal_tool_error_never_echoes_exception_text(server, monkeypatch):
+    private_marker = "private-input-must-not-be-reflected"
+
+    def fail_write(*args, **kwargs):
+        raise RuntimeError(private_marker)
+
+    monkeypatch.setattr("memory_unlocked.mcp_server.ops.write_memory", fail_write)
+    resp = server.handle(_req("tools/call", {
+        "name": "memory_write",
+        "arguments": {"title": "safe", "body": "safe", "source": "safe"},
+    }))
+    text = resp["result"]["content"][0]["text"]
+    assert resp["result"]["isError"] is True
+    assert text == "tool failed: internal error"
+    assert private_marker not in json.dumps(resp)
 
 
 def test_notification_returns_no_response(server):

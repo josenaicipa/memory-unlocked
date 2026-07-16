@@ -111,7 +111,10 @@ class SqliteStore(MemoryStore):
             source=Source(kind=source["kind"], ref=source["ref"], note=source.get("note")),
             kind=row["kind"],
             tags=list(json.loads(row["tags"])),
-            links=[Link(rel=l["rel"], target_id=l["target_id"]) for l in json.loads(row["links"])],
+            links=[
+                Link(rel=link["rel"], target_id=link["target_id"])
+                for link in json.loads(row["links"])
+            ],
             confidence=row["confidence"],
             status=row["status"],
         )
@@ -141,7 +144,9 @@ class SqliteStore(MemoryStore):
                     "ref": memory.source.ref,
                     "note": memory.source.note,
                 }),
-                json.dumps([{"rel": l.rel, "target_id": l.target_id} for l in memory.links]),
+                json.dumps(
+                    [{"rel": link.rel, "target_id": link.target_id} for link in memory.links]
+                ),
                 memory.confidence,
                 memory.status,
                 memory.created_at,

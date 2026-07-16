@@ -37,7 +37,15 @@ from . import __version__, ops
 from .models import Namespace
 from .store import MemoryStore
 
-PROTOCOL_VERSION = "2024-11-05"
+SUPPORTED_PROTOCOL_VERSIONS = (
+    "2024-11-05",
+    "2025-03-26",
+    "2025-06-18",
+    "2025-11-25",
+)
+LATEST_PROTOCOL_VERSION = SUPPORTED_PROTOCOL_VERSIONS[-1]
+# Backward-compatible public constant.
+PROTOCOL_VERSION = LATEST_PROTOCOL_VERSION
 SERVER_NAME = "memory-unlocked"
 
 # JSON-RPC 2.0 error codes.
@@ -199,7 +207,9 @@ class MemoryMcpServer:
         is_notification = "id" not in request
 
         if method == "initialize":
-            return self._result(request_id, self._initialize())
+            return self._result(
+                request_id, self._initialize(request.get("params") or {})
+            )
         if method == "notifications/initialized" or (is_notification and method != "ping"):
             return None
         if method == "ping":
@@ -209,11 +219,15 @@ class MemoryMcpServer:
         if method == "tools/call":
             return self._result(request_id, self._call_tool(request.get("params") or {}))
 
-        return self._error(request_id, METHOD_NOT_FOUND, f"unknown method: {method}")
+        return self._error(request_id, METHOD_NOT_FOUND, "method not found")
 
-    def _initialize(self) -> Dict[str, Any]:
+    def _initialize(self, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        requested = (params or {}).get("protocolVersion")
+        negotiated = (
+            requested if requested in SUPPORTED_PROTOCOL_VERSIONS else LATEST_PROTOCOL_VERSION
+        )
         return {
-            "protocolVersion": PROTOCOL_VERSION,
+            "protocolVersion": negotiated,
             "capabilities": {"tools": {}},
             "serverInfo": {"name": SERVER_NAME, "version": __version__},
         }
@@ -240,9 +254,9 @@ class MemoryMcpServer:
                 return self._tool_list()
             if name == "memory_stats":
                 return self._tool_stats()
-            return self._tool_error(f"unknown tool: {name}")
-        except Exception as exc:  # noqa: BLE001 - tool errors are returned, not raised
-            return self._tool_error(f"tool failed: {exc}")
+            return self._tool_error("unknown tool")
+        except Exception:  # noqa: BLE001 - tool errors are returned, not raised
+            return self._tool_error("tool failed: internal error")
 
     # --- Tools ---------------------------------------------------------------
 
@@ -373,8 +387,8 @@ class MemoryMcpServer:
                 continue
             try:
                 response = self.handle(request)
-            except Exception as exc:  # noqa: BLE001 - never let one bad call kill the loop
-                response = self._error(request.get("id"), INTERNAL_ERROR, str(exc))
+            except Exception:  # noqa: BLE001 - never let one bad call kill the loop
+                response = self._error(request.get("id"), INTERNAL_ERROR, "internal error")
             if response is not None:
                 self._write(stdout, response)
 

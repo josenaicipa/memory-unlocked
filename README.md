@@ -1,6 +1,6 @@
 # Memory Unlocked
 
-A **privacy-first, scoped memory fabric** for AI agents. Memory Unlocked gives
+A **privacy-first, scoped local memory** for AI agents. Memory Unlocked gives
 agents durable, project-scoped memory without leaking secrets or letting one
 project's context bleed into another.
 
@@ -17,6 +17,11 @@ It is installable today as a dependency-free Python package with:
 
 The core stays deliberately small so teams can audit it, ship it locally, and
 adapt it to their own database, vector index, or hosted service later.
+
+**v1 local-isolation contract:** every installation starts with an empty local
+store. It does not include sample memories, connect to a maintainer database, or
+share data with any other installation. Each user owns their own JSONL/SQLite
+files. See the [student quickstart](docs/student-quickstart.md).
 
 ---
 
@@ -91,6 +96,7 @@ Use SQLite for a more production-like local backend:
 
 ```bash
 memory-unlocked --backend sqlite --path ./mem-sqlite init
+memory-unlocked --backend sqlite --path ./mem-sqlite doctor
 ```
 
 Extract semantic graph context and the public-safe graph reports:
@@ -197,6 +203,7 @@ These are the defaults, not opt-ins:
 ## Documentation
 
 - [Install & CLI](docs/install.md) — package install, JSONL/SQLite stores, CLI commands.
+- [Student quickstart](docs/student-quickstart.md) — isolated local setup starting with zero memories.
 - [Hermes / MCP](docs/hermes.md) — run the MCP server and bind it to a project scope.
 - [Semantic graph](docs/graph.md) — typed relation extraction and graph context.
 - [Threat model](docs/threat-model.md) — public security boundaries and residual risk.

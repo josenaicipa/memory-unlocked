@@ -12,6 +12,9 @@ python -m pip install -e '.[dev]'
 
 Core dependencies: none beyond Python stdlib.
 
+Every installation is local and starts empty. The package contains no memory
+database and does not contact a hosted Memory Unlocked service.
+
 ## Store backends
 
 JSONL is simple and append-only:
@@ -26,6 +29,7 @@ SQLite is recommended for single-machine production:
 memory-unlocked --backend sqlite --path ./.memory init
 # or
 MEMORY_UNLOCKED_BACKEND=sqlite memory-unlocked --path ./.memory init
+memory-unlocked --backend sqlite --path ./.memory doctor
 ```
 
 ## Core commands
@@ -74,6 +78,16 @@ memory-unlocked --path ./.other-memory import --in export.json
 ```
 
 Imports re-run the policy gate.
+
+## Diagnose an installation
+
+```bash
+memory-unlocked --backend sqlite --path ./.memory doctor --json
+```
+
+`doctor` reports version, backend, local path, writability, and aggregate memory
+count. It never prints memory bodies. A fresh student store should report
+`"memories": 0`.
 
 ## Eval
 

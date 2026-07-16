@@ -1,5 +1,22 @@
 # Changelog
 
+## 1.0.0 - Stable Local MCP for Students
+
+### Added
+
+- Stable local-per-installation contract: every new store starts with zero memories and has no connection to any maintainer or other student store.
+- `memory-unlocked doctor` for version, backend, writability, scope, and aggregate-count diagnostics without exposing memory bodies.
+- Student quickstart covering isolated SQLite setup, MCP binding, backup, restore, and deletion.
+- Release-artifact smoke that verifies an empty initial store, nine MCP tools, same-scope recall, and cross-project isolation.
+- MCP protocol negotiation through the official `2025-11-25` version while retaining support for `2024-11-05`, `2025-03-26`, and `2025-06-18` clients.
+- Linux Python 3.9-3.13, macOS Python 3.11, and Windows Python 3.11 CI coverage.
+- Verified wheel/sdist publication workflow with checksums, GitHub release assets, and PyPI trusted publishing.
+
+### Security
+
+- The public package ships no database, memory export, environment file, private namespace, or hosted-service connection.
+- Tenant/project remain process-bound MCP configuration and are never model-controlled tool arguments.
+
 ## 0.3.1 - Semantic Graph Layer
 
 ### Added
