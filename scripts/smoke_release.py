@@ -57,8 +57,12 @@ def request(request_id: int, method: str, params: Optional[Dict] = None) -> Dict
 
 
 def main() -> None:
-    with tempfile.TemporaryDirectory(prefix="memory-unlocked-v1-") as raw_home:
+    with (
+        tempfile.TemporaryDirectory(prefix="memory-unlocked-v1-") as raw_home,
+        tempfile.TemporaryDirectory(prefix="memory-unlocked-v1-other-") as raw_other_home,
+    ):
         home = Path(raw_home)
+        other_home = Path(raw_other_home)
 
         rpc_responses = run_mcp(
             home,
@@ -170,6 +174,14 @@ def main() -> None:
         if isolated[0]["result"]["structuredContent"]["total"] != 0:
             raise AssertionError("memory crossed project scope")
 
+        other_installation = run_mcp(
+            other_home,
+            "course-project",
+            [request(7, "tools/call", {"name": "memory_stats", "arguments": {}})],
+        )
+        if other_installation[0]["result"]["structuredContent"]["total"] != 0:
+            raise AssertionError("memory crossed installation home")
+
         print(
             json.dumps(
                 {
@@ -178,6 +190,7 @@ def main() -> None:
                     "tools": len(tools),
                     "initial_memories": 0,
                     "cross_scope_memories": 0,
+                    "cross_installation_memories": 0,
                     "status": "PASS",
                 },
                 sort_keys=True,
