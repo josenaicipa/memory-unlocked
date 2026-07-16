@@ -46,3 +46,17 @@ def test_publish_job_receives_only_python_distributions():
     assert "pip install" not in pypi_job
     assert publish.count("id-token: write") == 1
     assert publish.count("contents: write") == 1
+
+
+def test_publish_workflow_can_retry_an_existing_tag_without_shell_injection():
+    publish = (ROOT / ".github" / "workflows" / "publish.yml").read_text(
+        encoding="utf-8"
+    )
+
+    assert "workflow_dispatch:" in publish
+    assert "release_tag:" in publish
+    assert "ref: ${{ github.event.release.tag_name || inputs.release_tag }}" in publish
+    assert "RELEASE_TAG: ${{ github.event.release.tag_name || inputs.release_tag }}" in publish
+    assert 'gh release upload "$RELEASE_TAG"' in publish
+    assert '--repo "$GITHUB_REPOSITORY"' in publish
+    assert 'gh release upload "${{' not in publish

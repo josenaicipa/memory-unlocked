@@ -26,7 +26,7 @@ python -m venv /tmp/memory-unlocked-release
 PATH="/tmp/memory-unlocked-release/bin:$PATH" python scripts/smoke_release.py
 ```
 
-The smoke must report version `1.0.0`, current MCP protocol, nine tools, zero initial memories, and zero cross-scope memories.
+The smoke must report version `1.0.0`, current MCP protocol, nine tools, zero initial memories, zero cross-scope memories, and zero cross-installation memories across two independent homes.
 
 ## 3. Public-safety sweep
 
@@ -54,6 +54,17 @@ Synthetic security fixtures are allowed only inside tests and must not be valid 
 3. Publish the GitHub release.
 4. The release workflow builds, smokes, adds checksums/assets, and publishes to PyPI through trusted publishing.
 5. Verify the release workflow and PyPI project page.
+
+If a release event already exists but a workflow-only correction is required, keep the
+tag immutable and dispatch the corrected workflow from the reviewed `main` branch:
+
+```bash
+gh workflow run publish.yml --ref main -f release_tag=vX.Y.Z
+```
+
+Use this only after confirming that the tag still points to the reviewed commit and that
+the PyPI Trusted Publisher matches owner `josenaicipa`, repository
+`memory-unlocked`, workflow `publish.yml`, and environment `pypi`.
 
 ## 6. Post-publish student smoke
 
