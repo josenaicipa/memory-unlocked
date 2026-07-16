@@ -220,9 +220,12 @@ class MemoryMcpServer:
         params = request.get("params")
         if params is not None and not isinstance(params, dict):
             return self._error(request_id, INVALID_PARAMS, "invalid params")
+        params = params or {}
+        if not self._valid_method_params(method, params):
+            return self._error(request_id, INVALID_PARAMS, "invalid params")
 
         if method == "initialize":
-            return self._result(request_id, self._initialize(params or {}))
+            return self._result(request_id, self._initialize(params))
         if method == "notifications/initialized":
             return None
         if method == "ping":
@@ -233,6 +236,36 @@ class MemoryMcpServer:
             return self._result(request_id, self._call_tool(params or {}))
 
         return self._error(request_id, METHOD_NOT_FOUND, "method not found")
+
+    @staticmethod
+    def _valid_method_params(method: str, params: Dict[str, Any]) -> bool:
+        if method == "initialize":
+            protocol = params.get("protocolVersion")
+            capabilities = params.get("capabilities")
+            client = params.get("clientInfo")
+            return (
+                isinstance(protocol, str)
+                and bool(protocol.strip())
+                and isinstance(capabilities, dict)
+                and isinstance(client, dict)
+                and isinstance(client.get("name"), str)
+                and bool(client["name"].strip())
+                and isinstance(client.get("version"), str)
+                and bool(client["version"].strip())
+            )
+        if method == "tools/call":
+            name = params.get("name")
+            arguments = params.get("arguments", {})
+            return (
+                isinstance(name, str)
+                and bool(name.strip())
+                and isinstance(arguments, dict)
+            )
+        if method == "tools/list":
+            return "cursor" not in params or isinstance(params["cursor"], str)
+        if method == "ping":
+            return not params
+        return True
 
     def _initialize(self, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         requested = (params or {}).get("protocolVersion")

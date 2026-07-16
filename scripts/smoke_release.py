@@ -66,14 +66,17 @@ def main() -> None:
             [
                 [],
                 {"jsonrpc": "2.0", "method": "ping"},
+                request(89, "tools/call", {"name": "memory_stats", "arguments": []}),
                 request(90, "ping"),
             ],
         )
-        if len(rpc_responses) != 2:
+        if len(rpc_responses) != 3:
             raise AssertionError("notification produced a response")
         if rpc_responses[0].get("error", {}).get("code") != -32600:
             raise AssertionError("non-object JSON-RPC input was not rejected")
-        if rpc_responses[1] != {"jsonrpc": "2.0", "id": 90, "result": {}}:
+        if rpc_responses[1].get("error", {}).get("code") != -32602:
+            raise AssertionError("semantic MCP params were not rejected")
+        if rpc_responses[2] != {"jsonrpc": "2.0", "id": 90, "result": {}}:
             raise AssertionError("MCP server did not continue after invalid input")
 
         version = subprocess.run(
