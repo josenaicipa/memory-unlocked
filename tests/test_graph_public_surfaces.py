@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 
-from memory_unlocked import Namespace, cli
+from memory_unlocked import Namespace
 from memory_unlocked.mcp_server import MemoryMcpServer, build_tools
 from memory_unlocked.persistence import JsonlStore
 from memory_unlocked.policy import PolicyConfig

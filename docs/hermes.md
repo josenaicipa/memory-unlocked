@@ -1,6 +1,6 @@
 # Hermes / MCP Quickstart
 
-Memory Unlocked exposes a dependency-free MCP stdio server. The important security rule: **Hermes/runtime binds the namespace with environment variables; the model never chooses tenant/project.**
+Memory Unlocked exposes a dependency-free MCP stdio server. The important security rule: **Hermes/runtime binds the namespace with environment variables; the model never chooses tenant/project.** Each local installation starts with an empty store and has no route to another user's memory.
 
 ## 5-minute setup
 
@@ -57,3 +57,16 @@ memory-unlocked --backend sqlite --path "$HOME/.memory-unlocked/acme-demo" conte
 | Workspace/product | `tenant=<org>`, `project=<product-slug>` |
 
 Never put secrets, emails, phone numbers, account IDs, or internal domains in namespace names for public examples.
+
+## MCP protocol compatibility
+
+The v1 server negotiates the official MCP protocol versions `2024-11-05`,
+`2025-03-26`, `2025-06-18`, and `2025-11-25`. An unknown version receives
+the newest supported version in the initialization response.
+
+The server validates JSON-RPC and MCP method parameters before dispatch. An
+`initialize` request must include a string `protocolVersion`, an object
+`capabilities`, and `clientInfo` with string `name` and `version` fields.
+`tools/call` requires a non-empty string `name` and, when present, an object
+`arguments`. Invalid parameters return JSON-RPC `-32602`; notifications never
+receive responses.

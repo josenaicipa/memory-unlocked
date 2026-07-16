@@ -37,8 +37,17 @@ from . import __version__, ops
 from .models import Namespace
 from .store import MemoryStore
 
-PROTOCOL_VERSION = "2024-11-05"
+SUPPORTED_PROTOCOL_VERSIONS = (
+    "2024-11-05",
+    "2025-03-26",
+    "2025-06-18",
+    "2025-11-25",
+)
+LATEST_PROTOCOL_VERSION = SUPPORTED_PROTOCOL_VERSIONS[-1]
+# Backward-compatible public constant.
+PROTOCOL_VERSION = LATEST_PROTOCOL_VERSION
 SERVER_NAME = "memory-unlocked"
+JSONRPC_VERSION = "2.0"
 
 # JSON-RPC 2.0 error codes.
 PARSE_ERROR = -32700
@@ -192,28 +201,79 @@ class MemoryMcpServer:
 
     # --- Request routing -----------------------------------------------------
 
-    def handle(self, request: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    def handle(self, request: Any) -> Optional[Dict[str, Any]]:
         """Handle one JSON-RPC message. Returns None for notifications."""
+        if not isinstance(request, dict):
+            return self._error(None, INVALID_REQUEST, "invalid request")
+
         request_id = request.get("id")
         method = request.get("method")
-        is_notification = "id" not in request
+        if request.get("jsonrpc") != JSONRPC_VERSION or not isinstance(method, str):
+            return self._error(request_id, INVALID_REQUEST, "invalid request")
+
+        # MCP lifecycle notifications do not require work here. Ignore every
+        # request without an id so a mutating tool can never execute as a
+        # fire-and-forget notification, and JSON-RPC never receives a reply.
+        if "id" not in request:
+            return None
+
+        params = request.get("params")
+        if params is not None and not isinstance(params, dict):
+            return self._error(request_id, INVALID_PARAMS, "invalid params")
+        params = params or {}
+        if not self._valid_method_params(method, params):
+            return self._error(request_id, INVALID_PARAMS, "invalid params")
 
         if method == "initialize":
-            return self._result(request_id, self._initialize())
-        if method == "notifications/initialized" or (is_notification and method != "ping"):
+            return self._result(request_id, self._initialize(params))
+        if method == "notifications/initialized":
             return None
         if method == "ping":
             return self._result(request_id, {})
         if method == "tools/list":
             return self._result(request_id, {"tools": build_tools()})
         if method == "tools/call":
-            return self._result(request_id, self._call_tool(request.get("params") or {}))
+            return self._result(request_id, self._call_tool(params or {}))
 
-        return self._error(request_id, METHOD_NOT_FOUND, f"unknown method: {method}")
+        return self._error(request_id, METHOD_NOT_FOUND, "method not found")
 
-    def _initialize(self) -> Dict[str, Any]:
+    @staticmethod
+    def _valid_method_params(method: str, params: Dict[str, Any]) -> bool:
+        if method == "initialize":
+            protocol = params.get("protocolVersion")
+            capabilities = params.get("capabilities")
+            client = params.get("clientInfo")
+            return (
+                isinstance(protocol, str)
+                and bool(protocol.strip())
+                and isinstance(capabilities, dict)
+                and isinstance(client, dict)
+                and isinstance(client.get("name"), str)
+                and bool(client["name"].strip())
+                and isinstance(client.get("version"), str)
+                and bool(client["version"].strip())
+            )
+        if method == "tools/call":
+            name = params.get("name")
+            arguments = params.get("arguments", {})
+            return (
+                isinstance(name, str)
+                and bool(name.strip())
+                and isinstance(arguments, dict)
+            )
+        if method == "tools/list":
+            return "cursor" not in params or isinstance(params["cursor"], str)
+        if method == "ping":
+            return not params
+        return True
+
+    def _initialize(self, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        requested = (params or {}).get("protocolVersion")
+        negotiated = (
+            requested if requested in SUPPORTED_PROTOCOL_VERSIONS else LATEST_PROTOCOL_VERSION
+        )
         return {
-            "protocolVersion": PROTOCOL_VERSION,
+            "protocolVersion": negotiated,
             "capabilities": {"tools": {}},
             "serverInfo": {"name": SERVER_NAME, "version": __version__},
         }
@@ -240,9 +300,9 @@ class MemoryMcpServer:
                 return self._tool_list()
             if name == "memory_stats":
                 return self._tool_stats()
-            return self._tool_error(f"unknown tool: {name}")
-        except Exception as exc:  # noqa: BLE001 - tool errors are returned, not raised
-            return self._tool_error(f"tool failed: {exc}")
+            return self._tool_error("unknown tool")
+        except Exception:  # noqa: BLE001 - tool errors are returned, not raised
+            return self._tool_error("tool failed: internal error")
 
     # --- Tools ---------------------------------------------------------------
 
@@ -352,11 +412,15 @@ class MemoryMcpServer:
 
     @staticmethod
     def _result(request_id: Any, result: Dict[str, Any]) -> Dict[str, Any]:
-        return {"jsonrpc": "2.0", "id": request_id, "result": result}
+        return {"jsonrpc": JSONRPC_VERSION, "id": request_id, "result": result}
 
     @staticmethod
     def _error(request_id: Any, code: int, message: str) -> Dict[str, Any]:
-        return {"jsonrpc": "2.0", "id": request_id, "error": {"code": code, "message": message}}
+        return {
+            "jsonrpc": JSONRPC_VERSION,
+            "id": request_id,
+            "error": {"code": code, "message": message},
+        }
 
     # --- stdio loop ----------------------------------------------------------
 
@@ -373,8 +437,8 @@ class MemoryMcpServer:
                 continue
             try:
                 response = self.handle(request)
-            except Exception as exc:  # noqa: BLE001 - never let one bad call kill the loop
-                response = self._error(request.get("id"), INTERNAL_ERROR, str(exc))
+            except Exception:  # noqa: BLE001 - never let one bad call kill the loop
+                response = self._error(request.get("id"), INTERNAL_ERROR, "internal error")
             if response is not None:
                 self._write(stdout, response)
 

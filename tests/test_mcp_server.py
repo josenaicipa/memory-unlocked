@@ -7,7 +7,13 @@ import json
 import pytest
 
 from memory_unlocked import Namespace
-from memory_unlocked.mcp_server import MemoryMcpServer
+from memory_unlocked.mcp_server import (
+    INVALID_PARAMS,
+    INVALID_REQUEST,
+    LATEST_PROTOCOL_VERSION,
+    SUPPORTED_PROTOCOL_VERSIONS,
+    MemoryMcpServer,
+)
 from memory_unlocked.persistence import JsonlStore
 
 NS = Namespace("acme", "billing")
@@ -31,13 +37,32 @@ def _req(method, params=None, id=1):
     return msg
 
 
+def _init_params(protocol_version="2024-11-05"):
+    return {
+        "protocolVersion": protocol_version,
+        "capabilities": {},
+        "clientInfo": {"name": "pytest", "version": "1"},
+    }
+
+
 def test_initialize_returns_server_info(server):
-    resp = server.handle(_req("initialize", {"protocolVersion": "2024-11-05"}))
+    resp = server.handle(_req("initialize", _init_params()))
     assert resp["jsonrpc"] == "2.0"
     assert resp["id"] == 1
     assert "protocolVersion" in resp["result"]
     assert resp["result"]["serverInfo"]["name"]
     assert "tools" in resp["result"]["capabilities"]
+
+
+@pytest.mark.parametrize("protocol_version", SUPPORTED_PROTOCOL_VERSIONS)
+def test_initialize_negotiates_supported_protocol_versions(server, protocol_version):
+    resp = server.handle(_req("initialize", _init_params(protocol_version)))
+    assert resp["result"]["protocolVersion"] == protocol_version
+
+
+def test_initialize_uses_latest_protocol_for_unknown_client_version(server):
+    unknown = server.handle(_req("initialize", _init_params("2099-01-01")))
+    assert unknown["result"]["protocolVersion"] == LATEST_PROTOCOL_VERSION
 
 
 def test_tools_list_exposes_expected_tools(server):
@@ -119,10 +144,77 @@ def test_unknown_tool_is_error_result(server):
     assert resp["result"]["isError"] is True
 
 
+def test_internal_tool_error_never_echoes_exception_text(server, monkeypatch):
+    private_marker = "private-input-must-not-be-reflected"
+
+    def fail_write(*args, **kwargs):
+        raise RuntimeError(private_marker)
+
+    monkeypatch.setattr("memory_unlocked.mcp_server.ops.write_memory", fail_write)
+    resp = server.handle(_req("tools/call", {
+        "name": "memory_write",
+        "arguments": {"title": "safe", "body": "safe", "source": "safe"},
+    }))
+    text = resp["result"]["content"][0]["text"]
+    assert resp["result"]["isError"] is True
+    assert text == "tool failed: internal error"
+    assert private_marker not in json.dumps(resp)
+
+
 def test_notification_returns_no_response(server):
     # A request without an id is a notification; no response is emitted.
     resp = server.handle({"jsonrpc": "2.0", "method": "notifications/initialized"})
     assert resp is None
+
+
+@pytest.mark.parametrize("bad_request", [None, [], "invalid", 7])
+def test_non_object_json_rpc_request_returns_invalid_request(server, bad_request):
+    resp = server.handle(bad_request)
+    assert resp["id"] is None
+    assert resp["error"]["code"] == INVALID_REQUEST
+
+
+@pytest.mark.parametrize(
+    "invalid_request",
+    [
+        {"jsonrpc": "2.0", "id": 1},
+        {"jsonrpc": "1.0", "id": 1, "method": "ping"},
+        {"jsonrpc": "2.0", "id": 1, "method": 7},
+    ],
+)
+def test_malformed_json_rpc_object_returns_invalid_request(server, invalid_request):
+    resp = server.handle(invalid_request)
+    assert resp["id"] == 1
+    assert resp["error"]["code"] == INVALID_REQUEST
+
+
+def test_ping_notification_never_gets_a_response(server):
+    assert server.handle({"jsonrpc": "2.0", "method": "ping"}) is None
+
+
+def test_array_params_return_invalid_params(server):
+    resp = server.handle(_req("tools/call", []))
+    assert resp["error"]["code"] == INVALID_PARAMS
+
+
+@pytest.mark.parametrize(
+    ("method", "params"),
+    [
+        ("initialize", {}),
+        ("initialize", {**_init_params(), "protocolVersion": []}),
+        ("initialize", {**_init_params(), "capabilities": []}),
+        ("initialize", {**_init_params(), "clientInfo": []}),
+        ("initialize", {**_init_params(), "clientInfo": {"name": "pytest"}}),
+        ("tools/call", {}),
+        ("tools/call", {"name": "", "arguments": {}}),
+        ("tools/call", {"name": 7, "arguments": {}}),
+        ("tools/call", {"name": "memory_stats", "arguments": []}),
+        ("tools/list", {"cursor": []}),
+    ],
+)
+def test_semantically_invalid_method_params_return_invalid_params(server, method, params):
+    resp = server.handle(_req(method, params))
+    assert resp["error"]["code"] == INVALID_PARAMS
 
 
 def test_stats_tool(server):
@@ -137,8 +229,54 @@ def test_stats_tool(server):
 def test_serve_loop_reads_and_writes_lines(tmp_path):
     store = JsonlStore(tmp_path, clock=_clock())
     server = MemoryMcpServer(store=store, namespace=NS)
-    stdin = io.StringIO(json.dumps(_req("initialize")) + "\n")
+    stdin = io.StringIO(json.dumps(_req("initialize", _init_params())) + "\n")
     stdout = io.StringIO()
     server.serve(stdin, stdout)
     line = stdout.getvalue().strip()
     assert json.loads(line)["result"]["serverInfo"]["name"]
+
+
+def test_serve_survives_non_object_and_suppresses_notification(tmp_path):
+    store = JsonlStore(tmp_path, clock=_clock())
+    server = MemoryMcpServer(store=store, namespace=NS)
+    messages = [
+        [],
+        {"jsonrpc": "2.0", "method": "ping"},
+        _req("ping", id=2),
+    ]
+    stdin = io.StringIO("".join(json.dumps(message) + "\n" for message in messages))
+    stdout = io.StringIO()
+
+    server.serve(stdin, stdout)
+
+    responses = [json.loads(line) for line in stdout.getvalue().splitlines()]
+    assert len(responses) == 2
+    assert responses[0]["error"]["code"] == INVALID_REQUEST
+    assert responses[1] == {"jsonrpc": "2.0", "id": 2, "result": {}}
+
+
+def test_serve_continues_after_semantically_invalid_params(tmp_path):
+    store = JsonlStore(tmp_path, clock=_clock())
+    server = MemoryMcpServer(store=store, namespace=NS)
+    invalid = [
+        _req("initialize", {}, id=10),
+        _req("initialize", {**_init_params(), "protocolVersion": []}, id=11),
+        _req("tools/call", {}, id=12),
+        _req("tools/call", {"name": "memory_stats", "arguments": []}, id=13),
+        _req("tools/list", {"cursor": []}, id=14),
+    ]
+    stdin = io.StringIO(
+        "".join(
+            json.dumps(message) + "\n"
+            for message in [*invalid, _req("ping", id=99)]
+        )
+    )
+    stdout = io.StringIO()
+
+    server.serve(stdin, stdout)
+
+    responses = [json.loads(line) for line in stdout.getvalue().splitlines()]
+    assert [response["error"]["code"] for response in responses[:-1]] == [
+        INVALID_PARAMS
+    ] * len(invalid)
+    assert responses[-1] == {"jsonrpc": "2.0", "id": 99, "result": {}}

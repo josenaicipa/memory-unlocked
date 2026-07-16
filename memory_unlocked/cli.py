@@ -19,7 +19,7 @@ import json
 import os
 import sys
 from datetime import datetime, timedelta, timezone
-from typing import List, Optional, Sequence
+from typing import Optional, Sequence
 
 from . import __version__, evaluation, ops
 from .models import Namespace
@@ -82,6 +82,35 @@ def _cmd_init(args: argparse.Namespace) -> int:
         print(f"  memories: {store.path / 'memories.jsonl'}")
         print(f"  events:   {store.path / 'events.jsonl'}")
     return EXIT_OK
+
+
+def _cmd_doctor(args: argparse.Namespace) -> int:
+    """Report installation/store health without exposing memory contents."""
+    store = _open_store(args)
+    backend = _resolve_backend(args)
+    namespace = _optional_namespace(args)
+    stats = ops.compute_stats(store, namespace)
+    writable = os.access(store.path, os.W_OK)
+    result = {
+        "ok": bool(store.path.exists() and writable),
+        "version": __version__,
+        "backend": backend,
+        "path": str(store.path),
+        "writable": writable,
+        "memories": stats["total"],
+        "scope": namespace.as_key() if namespace else None,
+    }
+    if args.json:
+        print(json.dumps(result))
+    else:
+        print(f"Memory Unlocked {result['version']}: {'OK' if result['ok'] else 'NOT READY'}")
+        print(f"backend: {result['backend']}")
+        print(f"store: {result['path']}")
+        print(f"writable: {'yes' if result['writable'] else 'no'}")
+        print(f"memories: {result['memories']}")
+        if result["scope"]:
+            print(f"scope: {result['scope']}")
+    return EXIT_OK if result["ok"] else EXIT_ERROR
 
 
 def _cmd_write(args: argparse.Namespace) -> int:
@@ -333,6 +362,11 @@ def _build_parser() -> argparse.ArgumentParser:
 
     p_init = sub.add_parser("init", help="create a store directory")
     p_init.set_defaults(func=_cmd_init)
+
+    p_doctor = sub.add_parser("doctor", help="check local installation and store health")
+    add_ns(p_doctor, required=False)
+    p_doctor.add_argument("--json", action="store_true")
+    p_doctor.set_defaults(func=_cmd_doctor)
 
     p_write = sub.add_parser("write", help="store a durable fact")
     add_ns(p_write)

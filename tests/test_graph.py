@@ -2,8 +2,6 @@
 
 import json
 
-import pytest
-
 from memory_unlocked import (
     ENTITY_KINDS,
     Memory,

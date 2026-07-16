@@ -1,37 +1,41 @@
 # Roadmap
 
-Memory Unlocked is built as a safe, portable memory layer for MCP-compatible AI agents.
+Memory Unlocked is a safe, portable local memory layer for MCP-compatible AI agents.
 
-## v0.3 - Productization Preview
+## v1.0 - Stable Local MCP
 
-- [x] CLI + MCP installable package surface
+- [x] Dependency-free CLI and MCP package
 - [x] JSONL and SQLite local backends
-- [x] Lifecycle/governance commands
-- [x] Offline eval harness
-- [x] Hermes quickstart and examples
-- [x] Threat model and release checklist
+- [x] Empty-by-default, local-per-installation student model
+- [x] Process-bound tenant/project isolation
+- [x] Lifecycle, review, audit, export, import, and forgetting
+- [x] Offline recall/privacy eval harness
+- [x] Deterministic public-safe semantic graph
+- [x] Current MCP protocol negotiation with backward compatibility
+- [x] Cross-platform CI and exact release-artifact smoke
+- [x] Student quickstart, threat model, and privacy documentation
 
-## v0.4 - Production Teams
+## v1.x - Optional Local Enhancements
 
-- [ ] Postgres backend with migrations
-- [ ] pluggable embedding/ranking providers with offline default
 - [ ] encrypted-at-rest local option
 - [ ] signed export/import bundles
-- [ ] visual graph UI on top of the deterministic semantic graph
 - [ ] richer duplicate merge workflow
-- [ ] docs site with screenshots/video
+- [ ] visual graph UI on top of the deterministic semantic graph
+- [ ] additional MCP-client setup recipes
 
-## v0.5 - Managed/Commercial Layer
+## Future Team/Hosted Layer
 
-- [ ] hosted dashboard option
-- [ ] team approvals and RBAC
-- [ ] organization-wide governance reports
-- [ ] SaaS billing and license tiers
-- [ ] marketplace recipes for popular agent runners
+These are separate products and are not implied by the local v1 contract:
+
+- [ ] Postgres backend with migrations
+- [ ] authenticated multi-user service
+- [ ] tenant authorization, RBAC, quotas, and deletion controls
+- [ ] hosted dashboard and organization governance reports
 
 ## Non-goals
 
 - Storing raw conversations by default.
-- Becoming a generic vector DB.
+- Becoming a generic vector database.
 - Depending on paid embedding APIs for the core package.
-- Shipping private deployment details in the public repo.
+- Connecting student installations to a maintainer/private database.
+- Shipping private deployment details in the public repository.

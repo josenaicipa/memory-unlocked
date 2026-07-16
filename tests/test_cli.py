@@ -110,6 +110,20 @@ def test_stats_reports_totals(store_path, capsys):
     assert data["namespaces"]["acme/billing"] == 2
 
 
+def test_doctor_reports_healthy_empty_local_store(store_path, capsys):
+    code = run(["--backend", "sqlite", "doctor", "--json"], store_path)
+    out = capsys.readouterr().out
+    data = json.loads(out)
+
+    assert code == 0
+    assert data["ok"] is True
+    assert data["backend"] == "sqlite"
+    assert data["memories"] == 0
+    assert data["writable"] is True
+    assert data["version"] == "1.0.0"
+    assert "memory_bodies" not in data
+
+
 def test_export_outputs_json(store_path, capsys):
     run(["write", "--tenant", "acme", "--project", "billing",
          "--title", "exported", "--body", "x", "--source", "s"], store_path)

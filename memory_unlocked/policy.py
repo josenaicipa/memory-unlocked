@@ -11,7 +11,7 @@ mistakes impossible by default.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, replace
 from typing import Iterable, List, Pattern, Tuple
 
 from .models import Memory, Source
