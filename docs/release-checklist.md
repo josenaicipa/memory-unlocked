@@ -44,6 +44,8 @@ Synthetic security fixtures are allowed only inside tests and must not be valid 
 - Open a pull request and wait for every Linux/macOS/Windows CI job.
 - Run an independent public-readiness review against the exact diff/commit.
 - Resolve all blockers before merging.
+- Keep build, GitHub asset upload, and PyPI OIDC publishing in separate jobs.
+- Pin every third-party GitHub Action to a full commit SHA.
 
 ## 5. Publish
 

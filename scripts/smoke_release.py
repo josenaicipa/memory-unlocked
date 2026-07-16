@@ -8,7 +8,7 @@ import os
 import subprocess
 import tempfile
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 EXPECTED_VERSION = "1.0.0"
 EXPECTED_PROTOCOL = "2025-11-25"
@@ -25,7 +25,7 @@ EXPECTED_TOOLS = {
 }
 
 
-def run_mcp(home: Path, project: str, requests: List[Dict]) -> List[Dict]:
+def run_mcp(home: Path, project: str, requests: List[Any]) -> List[Dict]:
     env = os.environ.copy()
     env.update(
         {
@@ -59,6 +59,23 @@ def request(request_id: int, method: str, params: Optional[Dict] = None) -> Dict
 def main() -> None:
     with tempfile.TemporaryDirectory(prefix="memory-unlocked-v1-") as raw_home:
         home = Path(raw_home)
+
+        rpc_responses = run_mcp(
+            home,
+            "rpc-check",
+            [
+                [],
+                {"jsonrpc": "2.0", "method": "ping"},
+                request(90, "ping"),
+            ],
+        )
+        if len(rpc_responses) != 2:
+            raise AssertionError("notification produced a response")
+        if rpc_responses[0].get("error", {}).get("code") != -32600:
+            raise AssertionError("non-object JSON-RPC input was not rejected")
+        if rpc_responses[1] != {"jsonrpc": "2.0", "id": 90, "result": {}}:
+            raise AssertionError("MCP server did not continue after invalid input")
+
         version = subprocess.run(
             ["memory-unlocked", "--version"],
             text=True,

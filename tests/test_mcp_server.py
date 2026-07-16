@@ -8,6 +8,8 @@ import pytest
 
 from memory_unlocked import Namespace
 from memory_unlocked.mcp_server import (
+    INVALID_PARAMS,
+    INVALID_REQUEST,
     LATEST_PROTOCOL_VERSION,
     SUPPORTED_PROTOCOL_VERSIONS,
     MemoryMcpServer,
@@ -159,6 +161,36 @@ def test_notification_returns_no_response(server):
     assert resp is None
 
 
+@pytest.mark.parametrize("bad_request", [None, [], "invalid", 7])
+def test_non_object_json_rpc_request_returns_invalid_request(server, bad_request):
+    resp = server.handle(bad_request)
+    assert resp["id"] is None
+    assert resp["error"]["code"] == INVALID_REQUEST
+
+
+@pytest.mark.parametrize(
+    "invalid_request",
+    [
+        {"jsonrpc": "2.0", "id": 1},
+        {"jsonrpc": "1.0", "id": 1, "method": "ping"},
+        {"jsonrpc": "2.0", "id": 1, "method": 7},
+    ],
+)
+def test_malformed_json_rpc_object_returns_invalid_request(server, invalid_request):
+    resp = server.handle(invalid_request)
+    assert resp["id"] == 1
+    assert resp["error"]["code"] == INVALID_REQUEST
+
+
+def test_ping_notification_never_gets_a_response(server):
+    assert server.handle({"jsonrpc": "2.0", "method": "ping"}) is None
+
+
+def test_array_params_return_invalid_params(server):
+    resp = server.handle(_req("tools/call", []))
+    assert resp["error"]["code"] == INVALID_PARAMS
+
+
 def test_stats_tool(server):
     server.handle(_req("tools/call", {
         "name": "memory_write",
@@ -176,3 +208,22 @@ def test_serve_loop_reads_and_writes_lines(tmp_path):
     server.serve(stdin, stdout)
     line = stdout.getvalue().strip()
     assert json.loads(line)["result"]["serverInfo"]["name"]
+
+
+def test_serve_survives_non_object_and_suppresses_notification(tmp_path):
+    store = JsonlStore(tmp_path, clock=_clock())
+    server = MemoryMcpServer(store=store, namespace=NS)
+    messages = [
+        [],
+        {"jsonrpc": "2.0", "method": "ping"},
+        _req("ping", id=2),
+    ]
+    stdin = io.StringIO("".join(json.dumps(message) + "\n" for message in messages))
+    stdout = io.StringIO()
+
+    server.serve(stdin, stdout)
+
+    responses = [json.loads(line) for line in stdout.getvalue().splitlines()]
+    assert len(responses) == 2
+    assert responses[0]["error"]["code"] == INVALID_REQUEST
+    assert responses[1] == {"jsonrpc": "2.0", "id": 2, "result": {}}

@@ -47,6 +47,7 @@ LATEST_PROTOCOL_VERSION = SUPPORTED_PROTOCOL_VERSIONS[-1]
 # Backward-compatible public constant.
 PROTOCOL_VERSION = LATEST_PROTOCOL_VERSION
 SERVER_NAME = "memory-unlocked"
+JSONRPC_VERSION = "2.0"
 
 # JSON-RPC 2.0 error codes.
 PARSE_ERROR = -32700
@@ -200,24 +201,36 @@ class MemoryMcpServer:
 
     # --- Request routing -----------------------------------------------------
 
-    def handle(self, request: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    def handle(self, request: Any) -> Optional[Dict[str, Any]]:
         """Handle one JSON-RPC message. Returns None for notifications."""
+        if not isinstance(request, dict):
+            return self._error(None, INVALID_REQUEST, "invalid request")
+
         request_id = request.get("id")
         method = request.get("method")
-        is_notification = "id" not in request
+        if request.get("jsonrpc") != JSONRPC_VERSION or not isinstance(method, str):
+            return self._error(request_id, INVALID_REQUEST, "invalid request")
+
+        # MCP lifecycle notifications do not require work here. Ignore every
+        # request without an id so a mutating tool can never execute as a
+        # fire-and-forget notification, and JSON-RPC never receives a reply.
+        if "id" not in request:
+            return None
+
+        params = request.get("params")
+        if params is not None and not isinstance(params, dict):
+            return self._error(request_id, INVALID_PARAMS, "invalid params")
 
         if method == "initialize":
-            return self._result(
-                request_id, self._initialize(request.get("params") or {})
-            )
-        if method == "notifications/initialized" or (is_notification and method != "ping"):
+            return self._result(request_id, self._initialize(params or {}))
+        if method == "notifications/initialized":
             return None
         if method == "ping":
             return self._result(request_id, {})
         if method == "tools/list":
             return self._result(request_id, {"tools": build_tools()})
         if method == "tools/call":
-            return self._result(request_id, self._call_tool(request.get("params") or {}))
+            return self._result(request_id, self._call_tool(params or {}))
 
         return self._error(request_id, METHOD_NOT_FOUND, "method not found")
 
@@ -366,11 +379,15 @@ class MemoryMcpServer:
 
     @staticmethod
     def _result(request_id: Any, result: Dict[str, Any]) -> Dict[str, Any]:
-        return {"jsonrpc": "2.0", "id": request_id, "result": result}
+        return {"jsonrpc": JSONRPC_VERSION, "id": request_id, "result": result}
 
     @staticmethod
     def _error(request_id: Any, code: int, message: str) -> Dict[str, Any]:
-        return {"jsonrpc": "2.0", "id": request_id, "error": {"code": code, "message": message}}
+        return {
+            "jsonrpc": JSONRPC_VERSION,
+            "id": request_id,
+            "error": {"code": code, "message": message},
+        }
 
     # --- stdio loop ----------------------------------------------------------
 

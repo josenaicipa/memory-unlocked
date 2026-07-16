@@ -9,8 +9,10 @@
 - Student quickstart covering isolated SQLite setup, MCP binding, backup, restore, and deletion.
 - Release-artifact smoke that verifies an empty initial store, nine MCP tools, same-scope recall, and cross-project isolation.
 - MCP protocol negotiation through the official `2025-11-25` version while retaining support for `2024-11-05`, `2025-03-26`, and `2025-06-18` clients.
+- Fail-closed JSON-RPC validation for malformed messages, invalid params, and notifications that must never receive responses.
 - Linux Python 3.9-3.13, macOS Python 3.11, and Windows Python 3.11 CI coverage.
 - Verified wheel/sdist publication workflow with checksums, GitHub release assets, and PyPI trusted publishing.
+- Split, least-privilege release jobs with SHA-pinned GitHub Actions and a PyPI job that receives only verified wheel/sdist artifacts.
 
 ### Security
 
