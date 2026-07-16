@@ -3,6 +3,12 @@ name: Publish to PyPI
 on:
   release:
     types: [published]
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Existing immutable release tag to publish
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -16,6 +22,8 @@ jobs:
     steps:
       - name: Check out release tag
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ github.event.release.tag_name || inputs.release_tag }}
 
       - name: Set up Python
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
@@ -80,7 +88,8 @@ jobs:
       - name: Upload release assets
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release upload "$GITHUB_REF_NAME" dist/* checksums/SHA256SUMS.txt --clobber
+          RELEASE_TAG: ${{ github.event.release.tag_name || inputs.release_tag }}
+        run: gh release upload "$RELEASE_TAG" dist/* checksums/SHA256SUMS.txt --clobber --repo "$GITHUB_REPOSITORY"
 
   publish-pypi:
     name: Publish verified distributions to PyPI
