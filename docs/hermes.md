@@ -33,6 +33,9 @@ If your Hermes version uses config files instead of `hermes mcp add`, use the eq
 - `memory_graph_effective_backend` — public-safe effective backend payload for scoped graph readers (`effective_backend=memory_unlocked`).
 - `memory_list` — lists scope-local memories.
 - `memory_stats` — counts memories and events for the bound scope.
+- `memory_curate` — propose-only governance plan; never writes.
+
+Optional `mode` on `memory_recall` / `memory_context`: `classic` (default), `lexical`, `vector`, `hybrid`. Bind a conversation thread with `MEMORY_UNLOCKED_THREAD`; do not pass `thread` as a tool argument.
 
 ## Smoke with CLI first
 

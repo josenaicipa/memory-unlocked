@@ -29,13 +29,21 @@ class PolicyError(Exception):
 
 # Credential-shaped patterns. Each entry is (reason_code, compiled_regex).
 SECRET_PATTERNS: List[tuple[str, Pattern[str]]] = [
-    ("aws_access_key_id", re.compile(r"\bAKIA[0-9A-Z]{16}\b")),
+    ("aws_access_key_id", re.compile(r"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b")),
     ("aws_secret_var", re.compile(r"AWS_SECRET_ACCESS_KEY\s*[=:]\s*\S+")),
     ("private_key_block", re.compile(r"-----BEGIN[ A-Z]*PRIVATE KEY-----")),
     ("bearer_token", re.compile(r"\bBearer\s+[A-Za-z0-9\-._~+/]{20,}=*", re.IGNORECASE)),
     ("github_token", re.compile(r"\bgh[pousr]_[A-Za-z0-9]{20,}\b")),
+    ("github_pat", re.compile(r"\bgithub_pat_[A-Za-z0-9_]{22,}\b")),
     ("slack_token", re.compile(r"\bxox[baprs]-[A-Za-z0-9-]{10,}\b")),
-    ("openai_key", re.compile(r"\bsk-[A-Za-z0-9]{20,}\b")),
+    ("openai_key", re.compile(r"\bsk-(?:proj-)?[A-Za-z0-9]{20,}\b")),
+    ("anthropic_key", re.compile(r"\bsk-ant-[A-Za-z0-9_-]{20,}\b")),
+    ("google_api_key", re.compile(r"\bAIza[0-9A-Za-z_\-]{20,}\b")),
+    ("stripe_key", re.compile(r"\b(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{8,}\b")),
+    ("dsn_with_password", re.compile(
+        r"\b[a-z][a-z0-9+.\-]*://[^/\s:@]+:[^/\s:@]+@[^\s/]+",
+        re.IGNORECASE,
+    )),
     ("generic_secret_assignment", re.compile(
         r"\b(password|passwd|secret|api[_-]?key|access[_-]?token|client[_-]?secret)\b"
         r"\s*[=:]\s*[\"']?\S{6,}",
@@ -127,6 +135,7 @@ def _model_controlled_text(memory: Memory) -> Iterable[str]:
     yield memory.source.ref if memory.source else ""
     yield memory.source.note if memory.source and memory.source.note else ""
     yield " ".join(memory.tags)
+    yield memory.thread or ""
 
 
 def review(memory: Memory, config: PolicyConfig | None = None) -> Memory:

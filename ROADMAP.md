@@ -17,9 +17,12 @@ Memory Unlocked is a safe, portable local memory layer for MCP-compatible AI age
 
 ## v1.x - Optional Local Enhancements
 
+- [x] optional conversation-thread isolation
+- [x] opt-in BM25 / local-vector / hybrid retrieval
+- [x] richer duplicate and contradiction review (propose-only)
+- [x] optional TTL / expiry
 - [ ] encrypted-at-rest local option
 - [ ] signed export/import bundles
-- [ ] richer duplicate merge workflow
 - [ ] visual graph UI on top of the deterministic semantic graph
 - [ ] additional MCP-client setup recipes
 

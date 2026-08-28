@@ -12,6 +12,9 @@ It is installable today as a dependency-free Python package with:
 - lifecycle/governance commands for candidate review, archival, and forgetting,
 - token-budgeted context assembly and offline recall/privacy evals,
 - a deterministic semantic graph layer for typed agent context,
+- optional conversation-thread isolation and TTL,
+- opt-in BM25 / local-vector / hybrid retrieval (v1.0 ranking remains default),
+- propose-only curator and session-summary commands,
 - audit events for writes, recalls, updates, forgets, and rejections,
 - tests and CI for the privacy/scope guarantees.
 
@@ -206,6 +209,8 @@ These are the defaults, not opt-ins:
 - [Student quickstart](docs/student-quickstart.md) — isolated local setup starting with zero memories.
 - [Hermes / MCP](docs/hermes.md) — run the MCP server and bind it to a project scope.
 - [Semantic graph](docs/graph.md) — typed relation extraction and graph context.
+- [Thread scope](docs/thread-scope.md) — optional conversation isolation inside a project.
+- [Retrieval](docs/retrieval.md) — classic, BM25, local-vector, and hybrid ranking.
 - [Threat model](docs/threat-model.md) — public security boundaries and residual risk.
 - [Release checklist](docs/release-checklist.md) — repeatable PyPI/release process.
 - [Architecture](docs/architecture.md) — components, data flow, scope policy.

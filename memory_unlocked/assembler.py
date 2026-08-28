@@ -20,6 +20,7 @@ from .ranking import (
     tokenize,
 )
 from .render import RenderConfig, render_memory
+from .retrieval import DEFAULT_RETRIEVAL_MODE, normalize_mode, rank_candidates
 from .store import MemoryStore
 
 
@@ -40,10 +41,13 @@ class AssemblerConfig:
     statuses: tuple = RECALL_STATUSES
     ranking: RankingConfig = field(default_factory=RankingConfig)
     render: RenderConfig = field(default_factory=RenderConfig)
+    thread: Optional[str] = None
+    retrieval_mode: str = DEFAULT_RETRIEVAL_MODE
 
     def __post_init__(self) -> None:
         # Keep the legacy ``tag_boost`` knob authoritative over ranking.tag_weight.
         self.ranking.tag_weight = self.tag_boost
+        self.retrieval_mode = normalize_mode(self.retrieval_mode)
 
 
 class ContextAssembler:
@@ -66,16 +70,21 @@ class ContextAssembler:
             text=query or None,
             statuses=self._config.statuses,
             match=False,
+            thread=self._config.thread,
         )
-        terms = tokenize(query)
-        scorer = Scorer(candidates, self._config.ranking)
-        ranked = sorted(
-            candidates,
-            key=lambda m: (-scorer.score(m, terms), m.created_at or "", m.id or ""),
-        )
-
-        if terms:
-            ranked = [m for m in ranked if self._is_relevant(m, terms, scorer)]
+        if self._config.retrieval_mode == DEFAULT_RETRIEVAL_MODE:
+            terms = tokenize(query)
+            scorer = Scorer(candidates, self._config.ranking)
+            ranked = sorted(
+                candidates,
+                key=lambda m: (-scorer.score(m, terms), m.created_at or "", m.id or ""),
+            )
+            if terms:
+                ranked = [m for m in ranked if self._is_relevant(m, terms, scorer)]
+        else:
+            ranked = rank_candidates(
+                candidates, query=query, mode=self._config.retrieval_mode
+            )
         if self._config.dedupe:
             ranked = dedupe_memories(ranked, self._config.ranking.dedupe_threshold)
         return ranked[: self._config.max_memories]

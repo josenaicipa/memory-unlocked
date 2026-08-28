@@ -27,7 +27,8 @@ floor, not a ceiling — extend it for your domain.
 - **Customer / lead / end-user data** — anything belonging to the people your
   product serves. Keep it in your application's system of record, not memory.
 - **Raw transcripts and message dumps** — summarize the durable conclusion
-  instead of storing the conversation.
+  instead of storing the conversation. `session-summarize` is propose-only and
+  still does not write.
 - **Transient progress** — "currently running step 3" is not a memory.
 
 ## What is good to store

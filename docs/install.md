@@ -51,6 +51,25 @@ memory-unlocked --path ./.memory list --tenant acme --project demo
 memory-unlocked --path ./.memory stats --json
 ```
 
+Optional v1.1 flags stay backward compatible: omit them and v1.0.0 behaviour is unchanged.
+
+```bash
+memory-unlocked --path ./.memory write \
+  --tenant acme --project demo --thread ticket-42 \
+  --ttl-days 30 \
+  --title "Ticket routing" \
+  --body "Ticket 42 refunds use the worker." \
+  --source docs/ticket.md
+
+memory-unlocked --path ./.memory recall \
+  --tenant acme --project demo --thread ticket-42 \
+  --query worker --mode hybrid
+
+memory-unlocked --path ./.memory curate --tenant acme --project demo --json
+```
+
+`curate` and `session-summarize` are propose-only: they never write.
+
 ## Lifecycle/governance
 
 ```bash

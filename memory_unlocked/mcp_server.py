@@ -13,6 +13,7 @@ and exposes these tools to an agent runner such as Hermes or Claude:
     memory_graph_context   render a compact, token-budgeted semantic-graph block
     memory_list            list the memories in the current scope
     memory_stats           counts of memories and audit events
+    memory_curate          propose-only governance plan; never writes
 
 The security model from the docs is enforced here: **the namespace is never a
 tool argument.** The runner picks the scope by launching the server with
@@ -35,7 +36,9 @@ from typing import Any, Dict, List, Optional, TextIO
 
 from . import __version__, ops
 from .models import Namespace
+from .retrieval import DEFAULT_RETRIEVAL_MODE, RETRIEVAL_MODES, normalize_mode
 from .store import MemoryStore
+from .thread_scope import ThreadScopeError, normalize_thread
 
 SUPPORTED_PROTOCOL_VERSIONS = (
     "2024-11-05",
@@ -60,7 +63,12 @@ ENV_PATH = "MEMORY_UNLOCKED_HOME"
 ENV_BACKEND = "MEMORY_UNLOCKED_BACKEND"
 ENV_TENANT = "MEMORY_UNLOCKED_TENANT"
 ENV_PROJECT = "MEMORY_UNLOCKED_PROJECT"
+ENV_THREAD = "MEMORY_UNLOCKED_THREAD"
 DEFAULT_PATH = "./.memory_unlocked"
+# Scope is process-bound. A model cannot name these as tool arguments.
+FORBIDDEN_SCOPE_KEYS = frozenset(
+    {"tenant", "project", "namespace", "thread", "scope_thread", "all_threads"}
+)
 
 
 def _utc_clock() -> str:
@@ -93,6 +101,10 @@ def build_tools() -> List[Dict[str, Any]]:
                         "type": "string",
                         "enum": ["fact", "decision", "convention", "reference"],
                     },
+                    "ttl_days": {
+                        "type": "integer",
+                        "description": "Optional time-to-live in days. Expired memories leave recall.",
+                    },
                 },
                 "required": ["title", "body", "source"],
             },
@@ -104,6 +116,11 @@ def build_tools() -> List[Dict[str, Any]]:
                 "type": "object",
                 "properties": {
                     "query": {"type": "string", "description": "What to recall."},
+                    "mode": {
+                        "type": "string",
+                        "enum": list(RETRIEVAL_MODES),
+                        "description": "classic (default), lexical, vector, or hybrid.",
+                    },
                 },
                 "required": ["query"],
             },
@@ -117,6 +134,11 @@ def build_tools() -> List[Dict[str, Any]]:
                     "query": {"type": "string", "description": "What the agent is working on."},
                     "token_budget": {"type": "integer", "description": "Approximate max tokens."},
                     "max_memories": {"type": "integer", "description": "Optional hard cap."},
+                    "mode": {
+                        "type": "string",
+                        "enum": list(RETRIEVAL_MODES),
+                        "description": "classic (default), lexical, vector, or hybrid.",
+                    },
                 },
                 "required": ["query"],
             },
@@ -174,15 +196,32 @@ def build_tools() -> List[Dict[str, Any]]:
             "description": "Counts of memories and audit events for the current scope.",
             "inputSchema": {"type": "object", "properties": {}},
         },
+        {
+            "name": "memory_curate",
+            "description": (
+                "Propose-only governance plan for the current project scope. "
+                "Never writes, never promotes, never archives."
+            ),
+            "inputSchema": {"type": "object", "properties": {}},
+        },
     ]
 
 
 class MemoryMcpServer:
     """Routes JSON-RPC requests to the memory service for a fixed namespace."""
 
-    def __init__(self, store: MemoryStore, namespace: Namespace) -> None:
+    def __init__(
+        self,
+        store: MemoryStore,
+        namespace: Namespace,
+        thread: Optional[str] = None,
+    ) -> None:
         self._store = store
         self._namespace = namespace
+        try:
+            self._thread = normalize_thread(thread)
+        except ThreadScopeError as exc:
+            raise SystemExit(f"error: {exc}") from exc
 
     @classmethod
     def from_env(cls) -> "MemoryMcpServer":
@@ -197,7 +236,11 @@ class MemoryMcpServer:
         path = os.environ.get(ENV_PATH) or DEFAULT_PATH
         backend = os.environ.get(ENV_BACKEND) or "jsonl"
         store = MemoryStore.open(path, backend=backend, clock=_utc_clock)
-        return cls(store=store, namespace=Namespace(tenant=tenant, project=project))
+        return cls(
+            store=store,
+            namespace=Namespace(tenant=tenant, project=project),
+            thread=os.environ.get(ENV_THREAD),
+        )
 
     # --- Request routing -----------------------------------------------------
 
@@ -281,6 +324,8 @@ class MemoryMcpServer:
     def _call_tool(self, params: Dict[str, Any]) -> Dict[str, Any]:
         name = params.get("name")
         arguments = params.get("arguments") or {}
+        if FORBIDDEN_SCOPE_KEYS.intersection(arguments):
+            return self._tool_error("scope is bound by the runner, not tool arguments")
         try:
             if name == "memory_write":
                 return self._tool_write(arguments)
@@ -300,6 +345,8 @@ class MemoryMcpServer:
                 return self._tool_list()
             if name == "memory_stats":
                 return self._tool_stats()
+            if name == "memory_curate":
+                return self._tool_curate()
             return self._tool_error("unknown tool")
         except Exception:  # noqa: BLE001 - tool errors are returned, not raised
             return self._tool_error("tool failed: internal error")
@@ -319,6 +366,8 @@ class MemoryMcpServer:
             kind=args.get("kind", "fact"),
             tags=args.get("tags"),
             status=args.get("status", "candidate"),
+            thread=self._thread,
+            ttl_days=args.get("ttl_days"),
         )
         if result["ok"]:
             text = f"stored {result['id']}"
@@ -327,8 +376,21 @@ class MemoryMcpServer:
             text = f"rejected: {result['rejected']}{detail}"
         return self._tool_result(text, result, is_error=not result["ok"])
 
+    def _mode(self, args: Dict[str, Any]) -> str:
+        mode = args.get("mode", DEFAULT_RETRIEVAL_MODE)
+        try:
+            return normalize_mode(mode)
+        except ValueError:
+            return DEFAULT_RETRIEVAL_MODE
+
     def _tool_recall(self, args: Dict[str, Any]) -> Dict[str, Any]:
-        result = ops.recall(self._store, self._namespace, query=args.get("query", ""))
+        result = ops.recall(
+            self._store,
+            self._namespace,
+            query=args.get("query", ""),
+            thread=self._thread,
+            mode=self._mode(args),
+        )
         text = result["context"] or "(no matching memories)"
         return self._tool_result(text, result)
 
@@ -339,6 +401,8 @@ class MemoryMcpServer:
             query=args.get("query", ""),
             token_budget=args.get("token_budget"),
             max_memories=args.get("max_memories"),
+            thread=self._thread,
+            mode=self._mode(args),
         )
         text = result["context"] or "(no matching memories)"
         return self._tool_result(text, result)
@@ -349,6 +413,7 @@ class MemoryMcpServer:
             self._namespace,
             query=args.get("query", ""),
             token_budget=args.get("token_budget"),
+            thread=self._thread,
         )
         text = result["context"] or "(no semantic relations in scope)"
         return self._tool_result(text, result)
@@ -359,6 +424,7 @@ class MemoryMcpServer:
             self._namespace,
             query=args.get("query", ""),
             current_only=bool(args.get("current_only", False)),
+            thread=self._thread,
         )
         return self._tool_result(json.dumps(result), result)
 
@@ -367,6 +433,7 @@ class MemoryMcpServer:
             self._store,
             self._namespace,
             query=args.get("query", ""),
+            thread=self._thread,
         )
         return self._tool_result(json.dumps(result), result)
 
@@ -375,11 +442,12 @@ class MemoryMcpServer:
             self._store,
             self._namespace,
             query=args.get("query", ""),
+            thread=self._thread,
         )
         return self._tool_result(json.dumps(result), result)
 
     def _tool_list(self) -> Dict[str, Any]:
-        result = ops.list_memories(self._store, self._namespace)
+        result = ops.list_memories(self._store, self._namespace, thread=self._thread)
         if not result["memories"]:
             text = "(no memories in scope)"
         else:
@@ -391,6 +459,16 @@ class MemoryMcpServer:
     def _tool_stats(self) -> Dict[str, Any]:
         result = ops.compute_stats(self._store, self._namespace)
         text = f"{result['total']} memories in {self._namespace.as_key()}"
+        return self._tool_result(text, result)
+
+    def _tool_curate(self) -> Dict[str, Any]:
+        result = ops.curate_store(
+            self._store, namespace=self._namespace, thread=self._thread
+        )
+        text = (
+            f"curator plan {result['plan_id']}: {result['counts']['proposals']} "
+            "proposal(s); propose-only, no writes"
+        )
         return self._tool_result(text, result)
 
     # --- Response builders ---------------------------------------------------

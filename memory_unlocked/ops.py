@@ -13,15 +13,21 @@ stdio; the transports own I/O.
 from __future__ import annotations
 
 from collections import defaultdict
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 from .assembler import AssemblerConfig, ContextAssembler
+from .curator import curate as curate_memories
+from .dedupe import find_contradiction_pairs
 from .graph import GRAPH_STATUSES, SEMANTIC_RELATIONS, Graph, extract_graph
 from .models import DEFAULT_STATUS, Memory, Namespace, Source
 from .policy import PolicyError, redact_if_secret, redact_pii
 from .ranking import estimate_tokens, find_duplicate_groups
+from .retrieval import DEFAULT_RETRIEVAL_MODE, normalize_mode
 from .serialize import event_to_dict, memory_to_dict
+from .session import summarize_session_events
 from .store import MemoryStore
+from .thread_scope import ThreadScopeError, normalize_thread
 
 # A single memory emitting more relations than this is flagged as noisy.
 GRAPH_NOISY_THRESHOLD = 8
@@ -51,6 +57,9 @@ def write_memory(
     tags: Optional[Any] = None,
     confidence: float = 1.0,
     status: str = DEFAULT_STATUS,
+    thread: Optional[str] = None,
+    expires_at: Optional[str] = None,
+    ttl_days: Optional[int] = None,
 ) -> Dict[str, Any]:
     """Build and store a memory.
 
@@ -59,6 +68,9 @@ def write_memory(
     refuses it. The offending content is never included in the result.
     """
     try:
+        expiry = expires_at
+        if ttl_days is not None:
+            expiry = _expiry_from_ttl_days(int(ttl_days), store._clock())
         memory = Memory(
             namespace=namespace,
             title=title,
@@ -68,8 +80,10 @@ def write_memory(
             tags=_split_tags(tags),
             confidence=confidence,
             status=status,
+            thread=normalize_thread(thread),
+            expires_at=expiry,
         )
-    except ValueError as exc:
+    except (ValueError, ThreadScopeError) as exc:
         return {"ok": False, "rejected": "invalid_input", "detail": str(exc)}
 
     try:
@@ -77,7 +91,39 @@ def write_memory(
     except PolicyError as exc:
         return {"ok": False, "rejected": exc.reason}
 
-    return {"ok": True, "id": stored.id, "status": stored.status}
+    return {
+        "ok": True,
+        "id": stored.id,
+        "status": stored.status,
+        "thread": stored.thread,
+        "expires_at": stored.expires_at,
+    }
+
+
+def _expiry_from_ttl_days(days: int, now_iso: str) -> str:
+    if days < 0:
+        raise ValueError("ttl_days must be >= 0")
+    try:
+        now = datetime.strptime(now_iso, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+    except ValueError:
+        now = datetime.now(timezone.utc)
+    return (now + timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _assembler_config(
+    max_memories: Optional[int] = None,
+    token_budget: Optional[int] = None,
+    thread: Optional[str] = None,
+    mode: Optional[str] = None,
+) -> AssemblerConfig:
+    config = AssemblerConfig()
+    if max_memories:
+        config.max_memories = max_memories
+    if token_budget:
+        config.max_tokens = token_budget
+    config.thread = normalize_thread(thread)
+    config.retrieval_mode = normalize_mode(mode)
+    return config
 
 
 def recall(
@@ -85,15 +131,19 @@ def recall(
     namespace: Namespace,
     query: str = "",
     max_memories: Optional[int] = None,
+    thread: Optional[str] = None,
+    mode: str = DEFAULT_RETRIEVAL_MODE,
 ) -> Dict[str, Any]:
     """Assemble a scope-filtered context block plus the structured matches."""
-    config = AssemblerConfig(max_memories=max_memories) if max_memories else AssemblerConfig()
+    config = _assembler_config(max_memories=max_memories, thread=thread, mode=mode)
     assembler = ContextAssembler(store, config)
     selected = assembler.select(namespace, query=query)
     context = assembler.assemble(namespace, query=query, selected=selected)
     return {
         "context": context,
         "matches": [memory_to_dict(m) for m in selected],
+        "mode": config.retrieval_mode,
+        "thread": config.thread,
     }
 
 
@@ -103,6 +153,8 @@ def build_context(
     query: str = "",
     token_budget: Optional[int] = None,
     max_memories: Optional[int] = None,
+    thread: Optional[str] = None,
+    mode: str = DEFAULT_RETRIEVAL_MODE,
 ) -> Dict[str, Any]:
     """Assemble a token-budgeted context block (the ``memory_context`` surface).
 
@@ -111,11 +163,12 @@ def build_context(
     memory ids were included), for callers that need to fit context into a model
     window. ``recall`` returns the structured matches for programmatic use.
     """
-    config = AssemblerConfig()
-    if max_memories:
-        config.max_memories = max_memories
-    if token_budget:
-        config.max_tokens = token_budget
+    config = _assembler_config(
+        max_memories=max_memories,
+        token_budget=token_budget,
+        thread=thread,
+        mode=mode,
+    )
     assembler = ContextAssembler(store, config)
     selected = assembler.select(namespace, query=query)
     context = assembler.assemble(namespace, query=query, selected=selected)
@@ -125,10 +178,17 @@ def build_context(
         "token_budget": token_budget,
         "memory_ids": [m.id for m in selected],
         "matches": [memory_to_dict(m) for m in selected],
+        "mode": config.retrieval_mode,
+        "thread": config.thread,
     }
 
 
-def _graph_for(store: MemoryStore, namespace: Namespace, query: str) -> Graph:
+def _graph_for(
+    store: MemoryStore,
+    namespace: Namespace,
+    query: str,
+    thread: Optional[str] = None,
+) -> Graph:
     """Extract the semantic graph for a scope, optionally narrowed by ``query``.
 
     Scope is enforced by ``store.query`` (active memories only); the graph layer
@@ -140,6 +200,7 @@ def _graph_for(store: MemoryStore, namespace: Namespace, query: str) -> Graph:
         text=query or None,
         statuses=GRAPH_STATUSES,
         match=bool(query),
+        thread=thread,
     )
     return extract_graph(memories, namespace)
 
@@ -163,6 +224,7 @@ def graph_report(
     store: MemoryStore,
     namespace: Namespace,
     query: str = "",
+    thread: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Structured semantic-graph report for a scope.
 
@@ -172,7 +234,7 @@ def graph_report(
     so the report is safe to print or ship. Secret/PII-shaped names are dropped
     at extraction time, so they can never appear here.
     """
-    graph = _graph_for(store, namespace, query)
+    graph = _graph_for(store, namespace, query, thread=thread)
 
     grouped: Dict[str, List[Dict[str, Any]]] = {rel: [] for rel in SEMANTIC_RELATIONS}
     for rel in graph.relations:
@@ -218,14 +280,20 @@ def _handle_map(ids: List[str]) -> Dict[str, str]:
     return {raw: f"m{idx + 1}" for idx, raw in enumerate(dict.fromkeys(i for i in ids if i))}
 
 
-def graph_temporal_report(store: MemoryStore, namespace: Namespace, query: str = "", current_only: bool = False) -> Dict[str, Any]:
+def graph_temporal_report(
+    store: MemoryStore,
+    namespace: Namespace,
+    query: str = "",
+    current_only: bool = False,
+    thread: Optional[str] = None,
+) -> Dict[str, Any]:
     """Read-only temporal view of scoped semantic relations.
 
     Public stores do not persist relation rows separately, so relation validity is
     derived from the source memory ``created_at`` timestamp. Output intentionally
     avoids raw memory ids and source refs.
     """
-    graph = _graph_for(store, namespace, query)
+    graph = _graph_for(store, namespace, query, thread=thread)
     grouped: Dict[tuple, List[Any]] = defaultdict(list)
     for rel in graph.relations:
         grouped[(rel.rel, rel.subject, rel.object)].append(rel)
@@ -262,16 +330,25 @@ def graph_temporal_report(store: MemoryStore, namespace: Namespace, query: str =
     }
 
 
-def graph_lineage_report(store: MemoryStore, namespace: Namespace, query: str = "") -> Dict[str, Any]:
+def graph_lineage_report(
+    store: MemoryStore,
+    namespace: Namespace,
+    query: str = "",
+    thread: Optional[str] = None,
+) -> Dict[str, Any]:
     """Redacted relation evidence and source-memory lineage handles.
 
     Unlike ``graph_report``, this surface is designed for shared/public MCP
     consumers: no raw memory ids, source refs, URLs, or bodies are emitted.
     """
-    graph = _graph_for(store, namespace, query)
+    graph = _graph_for(store, namespace, query, thread=thread)
     memory_ids = [rel.source_memory_id for rel in graph.relations if rel.source_memory_id]
     handles = _handle_map(memory_ids)
-    memories = {m.id: m for m in store.query(namespace, statuses=GRAPH_STATUSES) if m.id in handles}
+    memories = {}
+    for raw_id in handles:
+        mem = store.get(raw_id)
+        if mem is not None and mem.namespace == namespace:
+            memories[raw_id] = mem
 
     relations = []
     for idx, rel in enumerate(graph.relations):
@@ -312,14 +389,19 @@ def graph_lineage_report(store: MemoryStore, namespace: Namespace, query: str = 
     }
 
 
-def graph_effective_backend(store: MemoryStore, namespace: Namespace, query: str = "") -> Dict[str, Any]:
+def graph_effective_backend(
+    store: MemoryStore,
+    namespace: Namespace,
+    query: str = "",
+    thread: Optional[str] = None,
+) -> Dict[str, Any]:
     """Public-safe effective backend read for MCP/agent consumers.
 
     Memory Unlocked is already the canonical local backend in the public package;
     this mirrors the private effective-backend contract without mentioning or
     depending on any private legacy graph infrastructure.
     """
-    graph = _graph_for(store, namespace, query)
+    graph = _graph_for(store, namespace, query, thread=thread)
     graph_payload = {
         "nodes": [{"id": f"n{idx + 1}", "kind": e.kind, "name": _safe_text(e.name)} for idx, e in enumerate(graph.entities)],
         "edges": [
@@ -335,7 +417,7 @@ def graph_effective_backend(store: MemoryStore, namespace: Namespace, query: str
     }
     return {
         "command": "memory_graph_effective_backend",
-        "version": "public-1.0",
+        "version": "public-1.1",
         "effective_backend": "memory_unlocked",
         "cutover_ready": True,
         "memory_unlocked_canonical": True,
@@ -427,6 +509,7 @@ def graph_context(
     namespace: Namespace,
     query: str = "",
     token_budget: Optional[int] = None,
+    thread: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Render a compact, token-budgeted semantic-graph context block.
 
@@ -435,7 +518,7 @@ def graph_context(
     ``token_budget`` and carries no bodies, secrets, or PII — only the typed
     edges and the entities they connect.
     """
-    graph = _graph_for(store, namespace, query)
+    graph = _graph_for(store, namespace, query, thread=thread)
     header = f"# Memory graph — {namespace.as_key()}"
     lines: List[str] = [header]
     used = estimate_tokens(header)
@@ -485,12 +568,19 @@ def list_memories(
     store: MemoryStore,
     namespace: Namespace,
     statuses: Optional[List[str]] = None,
+    thread: Optional[str] = None,
+    include_expired: bool = False,
 ) -> Dict[str, Any]:
     """All memories in one scope, optionally filtered by lifecycle status.
 
     This uses ``store.query`` so the listing is audited as a scope-local recall.
     """
-    memories = store.query(namespace, statuses=statuses)
+    memories = store.query(
+        namespace,
+        statuses=statuses,
+        thread=thread,
+        include_expired=include_expired,
+    )
     return {"memories": [memory_to_dict(m) for m in memories]}
 
 
@@ -517,6 +607,7 @@ def audit(
     min_confidence: float = 0.5,
     stale_before: Optional[str] = None,
     dupe_threshold: float = 0.92,
+    now: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Governance scan: stale, low-confidence, and duplicate memories.
 
@@ -546,6 +637,24 @@ def audit(
 
     groups = find_duplicate_groups(memories, dupe_threshold)
     duplicates = [[_ref(m) for m in group] for group in groups]
+    expiry_cutoff = now or stale_before
+    expired = [
+        _ref(m) for m in memories
+        if m.expires_at and expiry_cutoff is not None and m.expires_at <= expiry_cutoff
+    ]
+    by_id = {m.id: m for m in memories if m.id}
+    contradictions = []
+    for pair in find_contradiction_pairs(memories):
+        left = by_id.get(pair.left_id)
+        right = by_id.get(pair.right_id)
+        if left is None or right is None:
+            continue
+        contradictions.append({
+            "left": _ref(left),
+            "right": _ref(right),
+            "reason": pair.reason,
+            "subject_overlap": pair.subject_overlap,
+        })
 
     return {
         "total": len(memories),
@@ -553,7 +662,37 @@ def audit(
         "stale": stale,
         "candidates": candidates,
         "duplicates": duplicates,
+        "expired": expired,
+        "contradictions": contradictions,
     }
+
+
+def curate_store(
+    store: MemoryStore,
+    namespace: Optional[Namespace] = None,
+    thread: Optional[str] = None,
+    now: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Propose-only curator plan. Never writes."""
+    generated_at = now or store._clock()
+    memories = [
+        m for m in store.all()
+        if namespace is None or m.namespace == namespace
+    ]
+    return curate_memories(
+        memories,
+        namespace=namespace,
+        thread=thread,
+        now=generated_at,
+    )
+
+
+def summarize_session(
+    events: List[Dict[str, Any]],
+    session_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Redacted episodic summary. Never writes durable memory."""
+    return summarize_session_events(events, session_id=session_id).to_dict()
 
 
 def compute_stats(

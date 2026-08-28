@@ -15,6 +15,7 @@ The CLI lives in ``memory_unlocked.cli`` and the MCP server in
 """
 
 from .assembler import AssemblerConfig, ContextAssembler
+from .curator import curate
 from .graph import (
     ALL_RELATIONS,
     CO_OCCURS,
@@ -27,17 +28,20 @@ from .graph import (
 )
 from .models import Event, Link, Memory, Namespace, Source
 from .persistence import JsonlStore
-from .sqlite_store import SqliteStore
 from .policy import PolicyConfig, PolicyError, review
+from .retrieval import RETRIEVAL_MODES, rank_candidates
 from .serialize import (
     event_from_dict,
     event_to_dict,
     memory_from_dict,
     memory_to_dict,
 )
+from .session import SessionSummary, summarize_session_events
+from .sqlite_store import SqliteStore
 from .store import MemoryStore
+from .thread_scope import ThreadScopeError, admits_thread
 
-__version__ = "1.0.0"
+__version__ = "1.1.0"
 
 __all__ = [
     "Memory",
@@ -65,5 +69,12 @@ __all__ = [
     "memory_from_dict",
     "event_to_dict",
     "event_from_dict",
+    "admits_thread",
+    "ThreadScopeError",
+    "rank_candidates",
+    "RETRIEVAL_MODES",
+    "curate",
+    "summarize_session_events",
+    "SessionSummary",
     "__version__",
 ]

@@ -26,7 +26,7 @@ python -m venv /tmp/memory-unlocked-release
 PATH="/tmp/memory-unlocked-release/bin:$PATH" python scripts/smoke_release.py
 ```
 
-The smoke must report version `1.0.0`, current MCP protocol, nine tools, zero initial memories, zero cross-scope memories, and zero cross-installation memories across two independent homes.
+The smoke must report version `1.1.0`, current MCP protocol, ten tools, zero initial memories, zero cross-scope memories, and zero cross-installation memories across two independent homes.
 
 ## 3. Public-safety sweep
 

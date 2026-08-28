@@ -24,6 +24,7 @@ from typing import Optional, Sequence
 from . import __version__, evaluation, ops
 from .models import Namespace
 from .persistence import atomic_write_text
+from .retrieval import DEFAULT_RETRIEVAL_MODE, RETRIEVAL_MODES
 from .store import MemoryStore
 
 DEFAULT_PATH = "./.memory_unlocked"
@@ -127,6 +128,8 @@ def _cmd_write(args: argparse.Namespace) -> int:
         tags=args.tags,
         confidence=args.confidence,
         status=getattr(args, "status", "active"),
+        thread=getattr(args, "thread", None),
+        ttl_days=getattr(args, "ttl_days", None),
     )
     if args.json:
         print(json.dumps(result))
@@ -141,13 +144,19 @@ def _cmd_write(args: argparse.Namespace) -> int:
 def _cmd_recall(args: argparse.Namespace) -> int:
     store = _open_store(args)
     token_budget = getattr(args, "token_budget", None)
+    thread = getattr(args, "thread", None)
+    mode = getattr(args, "mode", DEFAULT_RETRIEVAL_MODE)
     if token_budget:
         result = ops.build_context(
             store, _namespace(args), query=args.query,
             token_budget=token_budget, max_memories=args.max,
+            thread=thread, mode=mode,
         )
     else:
-        result = ops.recall(store, _namespace(args), query=args.query, max_memories=args.max)
+        result = ops.recall(
+            store, _namespace(args), query=args.query, max_memories=args.max,
+            thread=thread, mode=mode,
+        )
     if args.json:
         print(json.dumps(result))
     elif result["context"]:
@@ -159,7 +168,7 @@ def _cmd_recall(args: argparse.Namespace) -> int:
 
 def _cmd_list(args: argparse.Namespace) -> int:
     store = _open_store(args)
-    result = ops.list_memories(store, _namespace(args))
+    result = ops.list_memories(store, _namespace(args), thread=getattr(args, "thread", None))
     if args.json:
         print(json.dumps(result))
     elif not result["memories"]:
@@ -239,6 +248,7 @@ def _cmd_audit(args: argparse.Namespace) -> int:
         namespace=_optional_namespace(args),
         min_confidence=args.min_confidence,
         stale_before=cutoff,
+        now=_utc_clock(),
     )
     if args.json:
         print(json.dumps(result))
@@ -248,6 +258,8 @@ def _cmd_audit(args: argparse.Namespace) -> int:
         print(f"low confidence: {len(result['low_confidence'])}")
         print(f"stale: {len(result['stale'])}")
         print(f"duplicate groups: {len(result['duplicates'])}")
+        print(f"expired: {len(result['expired'])}")
+        print(f"contradictions: {len(result['contradictions'])}")
     return EXIT_OK
 
 
@@ -270,7 +282,9 @@ def _cmd_review(args: argparse.Namespace) -> int:
 
 def _cmd_graph(args: argparse.Namespace) -> int:
     store = _open_store(args)
-    result = ops.graph_report(store, _namespace(args), query=args.query)
+    result = ops.graph_report(
+        store, _namespace(args), query=args.query, thread=getattr(args, "thread", None),
+    )
     if args.json:
         print(json.dumps(result))
     else:
@@ -293,6 +307,7 @@ def _cmd_graph_context(args: argparse.Namespace) -> int:
     store = _open_store(args)
     result = ops.graph_context(
         store, _namespace(args), query=args.query, token_budget=args.token_budget,
+        thread=getattr(args, "thread", None),
     )
     if args.json:
         print(json.dumps(result))
@@ -307,6 +322,7 @@ def _cmd_graph_temporal(args: argparse.Namespace) -> int:
     store = _open_store(args)
     result = ops.graph_temporal_report(
         store, _namespace(args), query=args.query, current_only=args.current_only,
+        thread=getattr(args, "thread", None),
     )
     print(json.dumps(result) if args.json else json.dumps(result, indent=2))
     return EXIT_OK
@@ -314,14 +330,18 @@ def _cmd_graph_temporal(args: argparse.Namespace) -> int:
 
 def _cmd_graph_lineage(args: argparse.Namespace) -> int:
     store = _open_store(args)
-    result = ops.graph_lineage_report(store, _namespace(args), query=args.query)
+    result = ops.graph_lineage_report(
+        store, _namespace(args), query=args.query, thread=getattr(args, "thread", None),
+    )
     print(json.dumps(result) if args.json else json.dumps(result, indent=2))
     return EXIT_OK
 
 
 def _cmd_graph_effective_backend(args: argparse.Namespace) -> int:
     store = _open_store(args)
-    result = ops.graph_effective_backend(store, _namespace(args), query=args.query)
+    result = ops.graph_effective_backend(
+        store, _namespace(args), query=args.query, thread=getattr(args, "thread", None),
+    )
     print(json.dumps(result) if args.json else json.dumps(result, indent=2))
     return EXIT_OK
 
@@ -337,6 +357,41 @@ def _cmd_eval(args: argparse.Namespace) -> int:
         print(f"isolation pass rate: {result['isolation_pass_rate']:.2f}")
         print(f"token budget pass rate: {result['token_budget_pass_rate']:.2f}")
     return EXIT_OK if result.get("passed") else EXIT_ERROR
+
+
+def _cmd_curate(args: argparse.Namespace) -> int:
+    store = _open_store(args)
+    result = ops.curate_store(
+        store,
+        namespace=_optional_namespace(args),
+        thread=getattr(args, "thread", None),
+        now=getattr(args, "now", None) or _utc_clock(),
+    )
+    if args.json:
+        print(json.dumps(result))
+    else:
+        print(
+            f"curator plan {result['plan_id']}: {result['counts']['proposals']} "
+            f"proposal(s), writes_performed={result['writes_performed']}"
+        )
+        for proposal in result["proposals"]:
+            print(f"- {proposal['severity']} {proposal['action']} {proposal['memory_ids']}")
+        print("Propose-only: apply with status/forget after human review.")
+    return EXIT_OK
+
+
+def _cmd_session_summarize(args: argparse.Namespace) -> int:
+    with open(args.in_file, "r", encoding="utf-8") as fh:
+        payload = json.load(fh)
+    if isinstance(payload, dict):
+        events = payload.get("events") or payload.get("messages") or []
+        session_id = payload.get("session_id") or args.session_id
+    else:
+        events = payload
+        session_id = args.session_id
+    result = ops.summarize_session(events, session_id=session_id)
+    print(json.dumps(result) if args.json else json.dumps(result, indent=2))
+    return EXIT_OK if not result.get("secret_like_content") else EXIT_REJECTED
 
 # --- Argument parsing --------------------------------------------------------
 
@@ -360,6 +415,13 @@ def _build_parser() -> argparse.ArgumentParser:
         p.add_argument("--tenant", required=required, help="tenant scope")
         p.add_argument("--project", required=required, help="project scope")
 
+    def add_thread(p: argparse.ArgumentParser) -> None:
+        p.add_argument(
+            "--thread",
+            default=None,
+            help="optional conversation thread inside the project (never a wildcard)",
+        )
+
     p_init = sub.add_parser("init", help="create a store directory")
     p_init.set_defaults(func=_cmd_init)
 
@@ -382,21 +444,36 @@ def _build_parser() -> argparse.ArgumentParser:
     p_write.add_argument("--confidence", type=float, default=1.0)
     p_write.add_argument("--status", default="active",
                          help="candidate|active|archived|rejected (default: active)")
+    add_thread(p_write)
+    p_write.add_argument(
+        "--ttl-days",
+        type=int,
+        default=None,
+        help="optional time-to-live in days; expired memories leave recall",
+    )
     p_write.add_argument("--json", action="store_true")
     p_write.set_defaults(func=_cmd_write)
 
     for name in ("recall", "context"):
         p_recall = sub.add_parser(name, help="assemble scope-filtered context")
         add_ns(p_recall)
+        add_thread(p_recall)
         p_recall.add_argument("--query", default="")
         p_recall.add_argument("--max", type=int, default=None, help="max memories")
         p_recall.add_argument("--token-budget", type=int, default=None,
                               help="estimated token budget for context assembly")
+        p_recall.add_argument(
+            "--mode",
+            default=DEFAULT_RETRIEVAL_MODE,
+            choices=RETRIEVAL_MODES,
+            help="classic (v1.0 default), lexical BM25, vector, or hybrid RRF",
+        )
         p_recall.add_argument("--json", action="store_true")
         p_recall.set_defaults(func=_cmd_recall)
 
     p_list = sub.add_parser("list", help="list memories in a scope")
     add_ns(p_list)
+    add_thread(p_list)
     p_list.add_argument("--json", action="store_true")
     p_list.set_defaults(func=_cmd_list)
 
@@ -441,6 +518,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
     p_graph = sub.add_parser("graph", help="extract a public-safe semantic graph for a scope")
     add_ns(p_graph)
+    add_thread(p_graph)
     p_graph.add_argument("--query", default="", help="narrow the graph to matching memories")
     p_graph.add_argument("--json", action="store_true")
     p_graph.set_defaults(func=_cmd_graph)
@@ -448,6 +526,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p_graph_ctx = sub.add_parser(
         "graph-context", help="render a compact, token-budgeted semantic-graph block")
     add_ns(p_graph_ctx)
+    add_thread(p_graph_ctx)
     p_graph_ctx.add_argument("--query", default="")
     p_graph_ctx.add_argument("--token-budget", type=int, default=None,
                              help="estimated token budget for the graph block")
@@ -457,6 +536,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p_graph_temporal = sub.add_parser(
         "graph-temporal", help="public-safe temporal view of scoped semantic relations")
     add_ns(p_graph_temporal)
+    add_thread(p_graph_temporal)
     p_graph_temporal.add_argument("--query", default="")
     p_graph_temporal.add_argument("--current-only", action="store_true")
     p_graph_temporal.add_argument("--json", action="store_true")
@@ -465,6 +545,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p_graph_lineage = sub.add_parser(
         "graph-lineage", help="redacted relation evidence and lineage handles")
     add_ns(p_graph_lineage)
+    add_thread(p_graph_lineage)
     p_graph_lineage.add_argument("--query", default="")
     p_graph_lineage.add_argument("--json", action="store_true")
     p_graph_lineage.set_defaults(func=_cmd_graph_lineage)
@@ -472,6 +553,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p_graph_backend = sub.add_parser(
         "graph-effective-backend", help="read-only public-safe effective graph backend payload")
     add_ns(p_graph_backend)
+    add_thread(p_graph_backend)
     p_graph_backend.add_argument("--query", default="")
     p_graph_backend.add_argument("--json", action="store_true")
     p_graph_backend.set_defaults(func=_cmd_graph_effective_backend)
@@ -480,6 +562,22 @@ def _build_parser() -> argparse.ArgumentParser:
     p_eval.add_argument("evalset")
     p_eval.add_argument("--json", action="store_true")
     p_eval.set_defaults(func=_cmd_eval)
+
+    p_curate = sub.add_parser("curate", help="propose-only governance plan (never writes)")
+    add_ns(p_curate, required=False)
+    add_thread(p_curate)
+    p_curate.add_argument("--now", default=None, help="ISO-8601 timestamp for a reproducible plan")
+    p_curate.add_argument("--json", action="store_true")
+    p_curate.set_defaults(func=_cmd_curate)
+
+    p_session = sub.add_parser(
+        "session-summarize",
+        help="redacted episodic session summary; propose-only, never writes",
+    )
+    p_session.add_argument("--in", dest="in_file", required=True, help="JSON events or messages file")
+    p_session.add_argument("--session-id", default=None)
+    p_session.add_argument("--json", action="store_true")
+    p_session.set_defaults(func=_cmd_session_summarize)
 
     return parser
 
