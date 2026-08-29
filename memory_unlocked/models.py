@@ -9,6 +9,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import List, Optional
 
+from .thread_scope import ThreadScopeError, normalize_thread
+
 
 # Allowed enumerations. Kept as simple tuples to avoid importing Enum machinery
 # and to keep validation explicit and easy to extend.
@@ -108,6 +110,11 @@ class Memory:
     # Updated by the store on any lifecycle change (status/confidence). None
     # until the first mutation; serializers default it to ``created_at``.
     updated_at: Optional[str] = None
+    # Optional conversation thread inside the tenant/project. ``None`` is the
+    # project-level row (v1.0 default). See :mod:`memory_unlocked.thread_scope`.
+    thread: Optional[str] = None
+    # Optional ISO-8601 expiry. Expired memories stay stored but leave recall.
+    expires_at: Optional[str] = None
 
     def __post_init__(self) -> None:
         if not self.title or not self.title.strip():
@@ -120,6 +127,16 @@ class Memory:
             raise ValueError(f"memory.status must be one of {MEMORY_STATUSES}")
         if not 0.0 <= self.confidence <= 1.0:
             raise ValueError("memory.confidence must be in [0, 1]")
+        try:
+            self.thread = normalize_thread(self.thread)
+        except ThreadScopeError as exc:
+            raise ValueError(str(exc)) from exc
+        if self.expires_at is not None:
+            expiry = str(self.expires_at).strip()
+            if not expiry:
+                self.expires_at = None
+            else:
+                self.expires_at = expiry
         # Normalize tags to lowercase, de-duplicated, order-preserving.
         seen: set = set()
         normalized: List[str] = []

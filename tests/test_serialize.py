@@ -79,3 +79,30 @@ def test_minimal_memory_round_trip():
     assert restored.tags == []
     assert restored.links == []
     assert restored.id is None
+    assert restored.thread is None
+    assert restored.expires_at is None
+
+
+def test_v11_optional_fields_round_trip():
+    mem = Memory(
+        namespace=Namespace("acme", "billing"),
+        title="threaded",
+        body="lives in a ticket",
+        source=Source(kind="doc", ref="docs/x.md"),
+        thread="ticket-42",
+        expires_at="2026-02-01T00:00:00Z",
+    )
+    restored = memory_from_dict(memory_to_dict(mem))
+    assert restored.thread == "ticket-42"
+    assert restored.expires_at == "2026-02-01T00:00:00Z"
+
+
+def test_legacy_dict_without_thread_loads():
+    restored = memory_from_dict({
+        "namespace": {"tenant": "acme", "project": "billing"},
+        "title": "legacy",
+        "body": "no thread field",
+        "source": {"kind": "doc", "ref": "docs/x.md"},
+    })
+    assert restored.thread is None
+    assert restored.expires_at is None

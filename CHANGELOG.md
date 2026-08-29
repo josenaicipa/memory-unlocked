@@ -1,5 +1,28 @@
 # Changelog
 
+## 1.1.0 - Retrieval, Thread Scope, and Propose-Only Governance
+
+### Added
+
+- Optional conversation **thread** isolation inside a tenant/project. Unnamed queries see only project-level memories; a named thread inherits project-level rows and never sibling threads. MCP binds thread from `MEMORY_UNLOCKED_THREAD`, never from tool arguments.
+- Optional **TTL** (`--ttl-days` / `expires_at`). Expired memories stay stored for audit but leave recall.
+- Opt-in retrieval modes `lexical` (BM25), `vector` (local hash embeddings), and `hybrid` (RRF). Default remains `classic` for v1.0.0 compatibility. Ranking still cannot widen scope.
+- Propose-only `memory-unlocked curate` / MCP `memory_curate` governance plan (duplicates, contradictions, expiry, low confidence, candidates). It never writes.
+- Propose-only `memory-unlocked session-summarize` for redacted episodic session summaries. Transcripts are never stored.
+- Audit reports expired memories and advisory contradiction pairs.
+- Broader secret patterns: GitHub PATs, Anthropic/Google/Stripe keys, password-bearing DSNs, ASIA keys.
+
+### Changed
+
+- SQLite stores created by v1.0.0 gain `thread` and `expires_at` columns on open. JSONL records without those fields keep loading as project-level durable memories.
+- MCP tool catalogue adds `memory_curate`. Recall/context accept optional `mode`. Scope keys (`tenant`, `project`, `thread`, `namespace`) in tool arguments are rejected.
+
+### Security
+
+- Thread wildcards (`all_threads`, `*`, …) are not selectable from CLI, MCP, or tool arguments.
+- Fusion raises if a ranker emits an id outside the authorized set.
+- Curator/session output never includes secret values or memory bodies.
+
 ## 1.0.0 - Stable Local MCP for Students
 
 ### Added

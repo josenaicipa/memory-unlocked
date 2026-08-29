@@ -45,6 +45,8 @@ def memory_to_dict(memory: Memory) -> Dict[str, Any]:
         "status": memory.status,
         "created_at": memory.created_at,
         "updated_at": memory.updated_at,
+        "thread": memory.thread,
+        "expires_at": memory.expires_at,
     }
 
 
@@ -62,6 +64,9 @@ def memory_from_dict(d: Dict[str, Any]) -> Memory:
         # Records written before lifecycle support have no status; treat them as
         # active so existing stores keep behaving exactly as before.
         status=d.get("status", DEFAULT_STATUS),
+        # v1.0 records have no thread/TTL; both default to project-level durable.
+        thread=d.get("thread"),
+        expires_at=d.get("expires_at"),
     )
     # id / created_at / updated_at are assigned post-construction (store-owned).
     memory.id = d.get("id")

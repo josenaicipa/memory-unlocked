@@ -38,7 +38,9 @@ CREATE TABLE IF NOT EXISTS memories (
     confidence  REAL NOT NULL,
     status      TEXT NOT NULL,
     created_at  TEXT,
-    updated_at  TEXT
+    updated_at  TEXT,
+    thread      TEXT,
+    expires_at  TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_memories_scope ON memories (tenant, project);
 CREATE TABLE IF NOT EXISTS events (
@@ -68,8 +70,21 @@ class SqliteStore(MemoryStore):
         self._conn = sqlite3.connect(str(self._db_file))
         self._conn.row_factory = sqlite3.Row
         self._conn.executescript(_SCHEMA)
+        self._migrate()
         self._conn.commit()
         self._load()
+
+    def _migrate(self) -> None:
+        """Add v1.1 columns to stores created by v1.0.0."""
+        cols = {row[1] for row in self._conn.execute("PRAGMA table_info(memories)")}
+        if "thread" not in cols:
+            self._conn.execute("ALTER TABLE memories ADD COLUMN thread TEXT")
+        if "expires_at" not in cols:
+            self._conn.execute("ALTER TABLE memories ADD COLUMN expires_at TEXT")
+        self._conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_memories_scope_thread "
+            "ON memories (tenant, project, thread)"
+        )
 
     @property
     def path(self) -> Path:
@@ -117,6 +132,8 @@ class SqliteStore(MemoryStore):
             ],
             confidence=row["confidence"],
             status=row["status"],
+            thread=row["thread"] if "thread" in row.keys() else None,
+            expires_at=row["expires_at"] if "expires_at" in row.keys() else None,
         )
         memory.id = row["id"]
         memory.created_at = row["created_at"]
@@ -129,8 +146,8 @@ class SqliteStore(MemoryStore):
         self._conn.execute(
             "INSERT OR REPLACE INTO memories "
             "(id, tenant, project, title, body, kind, tags, source, links, "
-            " confidence, status, created_at, updated_at) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            " confidence, status, created_at, updated_at, thread, expires_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (
                 memory.id,
                 memory.namespace.tenant,
@@ -151,6 +168,8 @@ class SqliteStore(MemoryStore):
                 memory.status,
                 memory.created_at,
                 memory.updated_at,
+                memory.thread,
+                memory.expires_at,
             ),
         )
         self._conn.commit()

@@ -15,6 +15,8 @@ same interface.
 | **Policy gate** | Validates every write: rejects secrets, requires a source. |
 | **Store** | Persists memories and enforces scope on every read. |
 | **Context assembler** | Selects, ranks, and renders scope-filtered context. |
+| **Thread scope** | Optional conversation isolation inside a project. Applied before ranking. |
+| **Retrieval** | Classic scorer, or opt-in BM25 / local-vector / hybrid RRF. |
 | **Event log** | Append-only audit trail of writes and recalls. |
 
 Each component is small and replaceable. The policy gate and the store are the
@@ -56,9 +58,12 @@ ranking, so a bug in ranking can never widen scope.
 1. The agent asks the **context assembler** for context, passing a namespace and
    an optional query.
 2. The store returns **only** memories whose namespace matches exactly.
-3. The assembler ranks matches (recency + query overlap + tag match) and renders
-   a bounded context block.
+3. The assembler ranks matches. Default ranking is the v1.0 blended scorer;
+   `--mode lexical|vector|hybrid` opts into BM25 / local vectors / RRF.
 4. An event is appended (`memory.recall`).
+
+Ranking never sees a row the store excluded. A ranking bug is a quality
+problem, not an isolation problem.
 
 ## Namespace / scope policy
 
@@ -72,6 +77,8 @@ A namespace is a pair: `(tenant, project)`.
   other's memories. Treat any cross-tenant read as a security incident.
 - **Project is the soft boundary.** Within one tenant, projects are still
   isolated by default; sharing is opt-in and explicit.
+- **Thread is optional and fail-closed.** Omitting a thread returns only
+  project-level rows. A named thread never sees a sibling thread.
 - **Namespaces are part of provenance.** They are stored on the memory and
   emitted in events, so audits can answer "what scope did this come from?"
 

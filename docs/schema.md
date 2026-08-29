@@ -19,7 +19,10 @@ The atomic unit. One memory = one durable fact.
 | `source` | Source | yes | Provenance. A write with no source is rejected. |
 | `links` | Link[] | no | Relations to other memories. |
 | `created_at` | timestamp | assigned | Set by the store on write. |
+| `updated_at` | timestamp | assigned | Set by the store on write or lifecycle change. |
 | `confidence` | float (0–1) | no | Optional trust weight for ranking. |
+| `thread` | string | no | Optional conversation thread inside the project. Omitted/`null` is project-level (v1.0 default). |
+| `expires_at` | timestamp | no | Optional TTL. Expired memories leave recall but remain stored. |
 
 ### Example
 
@@ -86,3 +89,5 @@ offending secret itself.
 | `project` | string | yes | Soft isolation boundary within a tenant. |
 
 Serialized form: `tenant/project`. Recall matches the full pair exactly.
+
+An optional `thread` is a sub-scope *inside* that pair, not a third namespace field. See [Thread scope](thread-scope.md).

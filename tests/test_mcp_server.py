@@ -77,6 +77,8 @@ def test_tools_list_exposes_expected_tools(server):
         # Namespace is injected server-side; never a model-controlled param.
         assert "tenant" not in tool["inputSchema"].get("properties", {})
         assert "project" not in tool["inputSchema"].get("properties", {})
+        assert "thread" not in tool["inputSchema"].get("properties", {})
+        assert "namespace" not in tool["inputSchema"].get("properties", {})
 
 
 def test_tools_call_write_then_recall(server):

@@ -1,6 +1,6 @@
 # Student Quickstart: one private memory per computer
 
-Memory Unlocked v1 is a **local MCP package**. Each student installs it on their own computer and receives a fresh store with **0 memories**. It does not contact a shared server, the instructor's store, or other students.
+Memory Unlocked v1.1 is a **local MCP package**. Each student installs it on their own computer and receives a fresh store with **0 memories**. It does not contact a shared server, the instructor's store, or other students. v1.1 optional flags (thread, TTL, retrieval mode) default off so a v1.0 workflow is unchanged.
 
 ## 1. Install
 

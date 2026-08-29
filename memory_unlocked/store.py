@@ -15,6 +15,7 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence
 from .models import Event, Memory, Namespace
 from .policy import PolicyConfig, PolicyError, redact_if_secret, review
 from .serialize import event_to_dict, memory_from_dict, memory_to_dict
+from .thread_scope import admits_thread, normalize_thread
 
 EXPORT_VERSION = 1
 
@@ -121,28 +122,49 @@ class MemoryStore:
         text: Optional[str] = None,
         statuses: Optional[Sequence[str]] = None,
         match: bool = True,
+        thread: Optional[str] = None,
+        thread_mode: Optional[str] = None,
+        include_expired: bool = False,
+        now: Optional[str] = None,
     ) -> List[Memory]:
         """Return memories in ``namespace`` only.
 
-        Scope is enforced first and unconditionally. ``statuses`` optionally
-        restricts to a set of lifecycle states (``None`` = every status).
-        ``match`` toggles the simple case-insensitive substring filter: callers
-        that do their own ranking (the assembler) pass ``match=False`` to get
-        the full in-scope set while still recording the recall in the audit log.
+        Scope is enforced first and unconditionally: tenant/project exact match,
+        then the thread predicate, then expiry. Ranking never sees a row these
+        filters excluded. ``statuses`` optionally restricts to a set of
+        lifecycle states (``None`` = every status). ``match`` toggles the
+        simple case-insensitive substring filter: callers that do their own
+        ranking (the assembler) pass ``match=False`` to get the full in-scope
+        set while still recording the recall in the audit log.
         """
         ids = self._by_ns.get(namespace.as_key(), [])
         # Defense in depth: re-check each object's namespace even though the
         # index is keyed by it, so a corrupt index can never leak scope.
         in_scope = [self._by_id[i] for i in ids if self._by_id[i].namespace == namespace]
+        requested_thread = normalize_thread(thread)
+        in_scope = [
+            m for m in in_scope
+            if admits_thread(m.thread, requested_thread, thread_mode)
+        ]
         if statuses is not None:
             allowed = set(statuses)
             in_scope = [m for m in in_scope if m.status in allowed]
+        if not include_expired:
+            cutoff = now or self._clock()
+            in_scope = [
+                m for m in in_scope
+                if not m.expires_at or m.expires_at > cutoff
+            ]
 
         self._emit(Event(
             type="memory.recall",
             namespace=namespace,
             at=self._clock(),
-            detail={"query": redact_if_secret(text or ""), "scope_size": len(in_scope)},
+            detail={
+                "query": redact_if_secret(text or ""),
+                "scope_size": len(in_scope),
+                "thread": requested_thread,
+            },
         ))
 
         if not text or not match:
