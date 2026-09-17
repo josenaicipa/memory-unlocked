@@ -120,7 +120,7 @@ def test_doctor_reports_healthy_empty_local_store(store_path, capsys):
     assert data["backend"] == "sqlite"
     assert data["memories"] == 0
     assert data["writable"] is True
-    assert data["version"] == "1.2.0"
+    assert data["version"] == "1.2.1"
     assert "memory_bodies" not in data
 
 

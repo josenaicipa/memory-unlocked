@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.2.1 - Hermes Configuration Safety
+
+### Fixed
+
+- Hermes provider configuration failures now fail closed, and configured store
+  paths are always resolved and constrained to the Hermes profile.
+- Declared the optional `hermes` extra for the provider's `PyYAML` dependency.
+
 ## 1.2.0 - Portable Memory Fabric Capabilities
 
 ### Added

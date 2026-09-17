@@ -18,6 +18,8 @@ database and does not contact a hosted Memory Unlocked service.
 ## Hermes native provider
 
 The package includes a generic, local Hermes plugin named `memory_fabric`.
+Install the optional Hermes dependency with `pip install memory-unlocked[hermes]`;
+it provides the plugin's `PyYAML` configuration loader.
 It is read-first: the provider binds its tenant/project from Hermes
 configuration, never accepts scope from a model tool call, and only writes a
 reviewable `candidate` when its explicit proposal tool receives `write: true`.

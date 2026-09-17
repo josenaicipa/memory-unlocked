@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import importlib.util
+import sys
+import types
 from pathlib import Path
 
 from memory_unlocked import (
@@ -88,7 +90,10 @@ def test_packaged_hermes_provider_is_configuration_bound(tmp_path, monkeypatch):
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    monkeypatch.chdir(tmp_path)
+    hermes_home = tmp_path / "hermes"
+    hermes_home.mkdir()
+    (hermes_home / "config.yaml").write_text("plugins: {}\n", encoding="utf-8")
+    monkeypatch.setitem(sys.modules, "hermes_constants", types.SimpleNamespace(get_hermes_home=lambda: hermes_home))
     monkeypatch.setenv("MEMORY_FABRIC_PATH", "local-store")
     monkeypatch.setenv("MEMORY_FABRIC_BACKEND", "sqlite")
     monkeypatch.setenv("MEMORY_FABRIC_TENANT", "example")
@@ -102,3 +107,37 @@ def test_packaged_hermes_provider_is_configuration_bound(tmp_path, monkeypatch):
     written = provider.handle_tool_call("memory_fabric_propose", {"title": "Fact", "body": "A durable fact.", "source": "docs/fact.md", "write": True})
     assert '"candidate"' in written
     assert "Fact" not in provider.handle_tool_call("memory_fabric_context", {"query": "Fact"})
+
+
+def test_hermes_provider_fails_closed_when_config_cannot_load(tmp_path, monkeypatch):
+    plugin_path = Path(__file__).parents[1] / "memory_unlocked" / "hermes_plugin" / "__init__.py"
+    spec = importlib.util.spec_from_file_location("memory_fabric_config_failure", plugin_path)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    monkeypatch.setitem(sys.modules, "hermes_constants", types.SimpleNamespace(get_hermes_home=lambda: tmp_path / "missing"))
+    monkeypatch.setenv("MEMORY_FABRIC_PATH", "local-store")
+    monkeypatch.setenv("MEMORY_FABRIC_TENANT", "example")
+    monkeypatch.setenv("MEMORY_FABRIC_PROJECT", "demo")
+    assert not module.MemoryFabricProvider().is_available()
+
+
+def test_hermes_provider_rejects_resolved_path_escape(tmp_path, monkeypatch):
+    hermes_home = tmp_path / "hermes"
+    hermes_home.mkdir()
+    (hermes_home / "config.yaml").write_text("plugins: {}\n", encoding="utf-8")
+    spec = importlib.util.spec_from_file_location("memory_fabric_path_failure", Path(__file__).parents[1] / "memory_unlocked" / "hermes_plugin" / "__init__.py")
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    monkeypatch.setitem(sys.modules, "hermes_constants", types.SimpleNamespace(get_hermes_home=lambda: hermes_home))
+    monkeypatch.setenv("MEMORY_FABRIC_PATH", "../outside")
+    monkeypatch.setenv("MEMORY_FABRIC_TENANT", "example")
+    monkeypatch.setenv("MEMORY_FABRIC_PROJECT", "demo")
+    assert not module.MemoryFabricProvider().is_available()
+
+
+def test_hermes_extra_declares_yaml_dependency():
+    metadata = Path(__file__).parents[1] / "pyproject.toml"
+    text = metadata.read_text(encoding="utf-8")
+    assert 'hermes = ["PyYAML>=6.0"]' in text

@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 try:  # Hermes supplies the real ABC at runtime.
     from agent.memory_provider import MemoryProvider
@@ -21,17 +21,24 @@ from memory_unlocked import ContextAssembler, MemoryStore, Namespace
 from memory_unlocked.ops import write_memory
 
 
-def _load_config() -> tuple[dict[str, Any], Path]:
+def _load_config() -> tuple[dict[str, Any], Optional[Path]]:
     """Read only the plugin block. Missing YAML support/config fails closed."""
     try:
         from hermes_constants import get_hermes_home
         import yaml
         home = Path(get_hermes_home())
-        data = yaml.safe_load((home / "config.yaml").read_text(encoding="utf-8")) or {}
-        block = data.get("plugins", {}).get("memory_fabric", {}) if isinstance(data, dict) else {}
+        data = yaml.safe_load((home / "config.yaml").read_text(encoding="utf-8"))
+        if not isinstance(data, dict):
+            raise ValueError("Hermes config must be a mapping")
+        plugins = data.get("plugins", {})
+        if not isinstance(plugins, dict):
+            raise ValueError("Hermes plugins config must be a mapping")
+        block = plugins.get("memory_fabric", {})
+        if not isinstance(block, dict):
+            raise ValueError("Hermes memory_fabric config must be a mapping")
         return (block if isinstance(block, dict) else {}), home
     except Exception:
-        return {}, Path.cwd()
+        return {}, None
 
 
 class MemoryFabricProvider(MemoryProvider):
@@ -51,11 +58,19 @@ class MemoryFabricProvider(MemoryProvider):
         return str(os.environ.get("MEMORY_FABRIC_" + key.upper(), self._config.get(key, default))).strip()
 
     def _path(self) -> Path:
+        if self._base is None:
+            raise ValueError("Hermes configuration could not be loaded")
         value = self._value("path", "memory-fabric")
         path = Path(value)
         if path.is_absolute() or ".." in path.parts:
             raise ValueError("memory_fabric.path must be a relative path inside the Hermes profile")
-        return self._base / path
+        base = self._base.resolve()
+        candidate = (base / path).resolve()
+        try:
+            candidate.relative_to(base)
+        except ValueError as exc:
+            raise ValueError("memory_fabric.path must remain inside the Hermes profile") from exc
+        return candidate
 
     def _namespace(self) -> Namespace:
         tenant, project = self._value("tenant"), self._value("project")
@@ -65,6 +80,7 @@ class MemoryFabricProvider(MemoryProvider):
 
     def is_available(self) -> bool:
         try:
+            self._path()
             self._namespace()
             return True
         except ValueError:

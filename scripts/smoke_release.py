@@ -10,7 +10,7 @@ import tempfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-EXPECTED_VERSION = "1.2.0"
+EXPECTED_VERSION = "1.2.1"
 EXPECTED_PROTOCOL = "2025-11-25"
 EXPECTED_TOOLS = {
     "memory_write",

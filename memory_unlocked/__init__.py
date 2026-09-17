@@ -51,7 +51,7 @@ from .reflex import reflex_post_task, reflex_pre_task
 from .retrieval_v2 import RankedMemory, rank_v2
 from .semantic_review import review_memory_record, review_namespace
 
-__version__ = "1.2.0"
+__version__ = "1.2.1"
 
 __all__ = [
     "Memory",
