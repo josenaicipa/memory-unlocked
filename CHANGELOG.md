@@ -1,5 +1,27 @@
 # Changelog
 
+## 1.2.0 - Portable Memory Fabric Capabilities
+
+### Added
+
+- Generic namespace profiles for internal, lead, customer, bot, and agent
+  boundaries without changing the serialized `Memory` schema.
+- Opt-in Markdown mirror, body-free audit dashboard, read-first task reflexes,
+  approval-required consolidation plans, governed local reusable assets, and a
+  dry-run Kaizen control-loop report.
+- Explicit semantic namespace/schema review, explainable retrieval-v2 ranking,
+  and generic channel rollout contracts.
+- A packaged native Hermes `memory_fabric` provider plugin plus a complete
+  configuration example. It is scope-bound, local-only, read-first, and writes
+  only reviewable candidates after explicit approval.
+- A public clean-room parity inventory with documented exclusions.
+
+### Security
+
+- The new surfaces retain existing scope isolation and avoid bodies in audit
+  output. No organization-specific routes, identities, operational data,
+  credentials, or host paths are included.
+
 ## 1.1.0 - Retrieval, Thread Scope, and Propose-Only Governance
 
 ### Added

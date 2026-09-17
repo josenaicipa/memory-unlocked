@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "memory-unlocked"
-version = "1.1.0"
+version = "1.2.0"
 description = "A privacy-first, scope-isolated local memory store for AI agents, with a CLI and an MCP server."
 readme = "README.md"
 requires-python = ">=3.9"
@@ -38,7 +38,10 @@ Documentation = "https://github.com/josenaicipa/memory-unlocked/tree/main/docs"
 Source = "https://github.com/josenaicipa/memory-unlocked"
 
 [tool.setuptools]
-packages = ["memory_unlocked"]
+packages = ["memory_unlocked", "memory_unlocked.hermes_plugin"]
+
+[tool.setuptools.package-data]
+memory_unlocked = ["hermes_plugin/*.py", "hermes_plugin/*.yaml"]
 
 [tool.pytest.ini_options]
 minversion = "7.0"

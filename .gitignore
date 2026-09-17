@@ -45,7 +45,7 @@ service-account*.json
 *.duckdb
 data/
 local_memory/
-memory_mirror/
+local-mirror/
 *.memory.local.*
 *.snapshot.json
 

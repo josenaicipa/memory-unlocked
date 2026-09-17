@@ -1,0 +1,4 @@
+name: memory_fabric
+description: "Local scoped memory provider backed by Memory Unlocked."
+version: 1.2.0
+kind: exclusive

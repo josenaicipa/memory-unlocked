@@ -22,6 +22,19 @@ hermes mcp add memory-unlocked \
 
 If your Hermes version uses config files instead of `hermes mcp add`, use the equivalent stdio command and environment variables.
 
+## Native provider plugin
+
+For Hermes versions with a memory-provider interface, install the packaged
+`memory_fabric` plugin instead of wiring MCP tools manually. The complete
+from-scratch procedure and configuration contract are in
+[Install & CLI](install.md#hermes-native-provider); start with
+[`examples/hermes-config.example.yaml`](../examples/hermes-config.example.yaml).
+
+The provider is local-only and configuration-bound. It refuses to start without
+tenant/project, refuses absolute or escaping store paths, does not accept a
+caller-selected namespace, and does not persist turn transcripts. Its proposal
+tool is dry-run until `write: true`, then saves only a `candidate` for review.
+
 ## Tools exposed
 
 - `memory_write` — proposes a durable memory for the bound scope. Defaults to `candidate` so model-originated memories can be reviewed before recall; pass `status: "active"` only for trusted automations.
