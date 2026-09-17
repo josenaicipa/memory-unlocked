@@ -15,6 +15,45 @@ Core dependencies: none beyond Python stdlib.
 Every installation is local and starts empty. The package contains no memory
 database and does not contact a hosted Memory Unlocked service.
 
+## Hermes native provider
+
+The package includes a generic, local Hermes plugin named `memory_fabric`.
+It is read-first: the provider binds its tenant/project from Hermes
+configuration, never accepts scope from a model tool call, and only writes a
+reviewable `candidate` when its explicit proposal tool receives `write: true`.
+
+Copy the packaged plugin directory into the target Hermes profile, then copy
+the example configuration and replace the neutral placeholders:
+
+```bash
+PLUGIN_DIR=$(python -c "import memory_unlocked, pathlib; print(pathlib.Path(memory_unlocked.__file__).with_name('hermes_plugin'))")
+mkdir -p "$HERMES_HOME/plugins/memory_fabric"
+cp "$PLUGIN_DIR/plugin.yaml" "$PLUGIN_DIR/__init__.py" "$HERMES_HOME/plugins/memory_fabric/"
+```
+
+Merge this block (also checked in as
+[`examples/hermes-config.example.yaml`](../examples/hermes-config.example.yaml))
+into your Hermes configuration and replace the neutral placeholders:
+
+```yaml
+memory:
+  provider: memory_fabric
+plugins:
+  memory_fabric:
+    path: memory-fabric
+    backend: sqlite
+    tenant: example-org
+    project: example-project
+```
+
+`path` is required to be a relative directory
+inside the Hermes profile; the plugin rejects absolute paths and `..` traversal.
+Its supported configuration keys are `path`, `backend`, `tenant`, and
+`project`. The same keys may be supplied as `MEMORY_FABRIC_PATH`,
+`MEMORY_FABRIC_BACKEND`, `MEMORY_FABRIC_TENANT`, and `MEMORY_FABRIC_PROJECT`.
+Use configuration for normal settings; environment variables are an optional
+deployment override, not a place for secrets.
+
 ## Store backends
 
 JSONL is simple and append-only:

@@ -1,0 +1,11 @@
+# Copy this block into a Hermes profile configuration. All values are examples.
+memory:
+  provider: memory_fabric
+
+plugins:
+  memory_fabric:
+    # Relative to the Hermes profile directory; absolute paths are rejected.
+    path: memory-fabric
+    backend: sqlite
+    tenant: example-org
+    project: example-project
