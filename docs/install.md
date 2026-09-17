@@ -10,7 +10,8 @@ uv tool install memory-unlocked
 python -m pip install -e '.[dev]'
 ```
 
-Core dependencies: none beyond Python stdlib.
+The package installs `PyYAML>=6.0` as a core dependency. All other runtime
+functionality uses the Python stdlib.
 
 Every installation is local and starts empty. The package contains no memory
 database and does not contact a hosted Memory Unlocked service.
@@ -18,8 +19,8 @@ database and does not contact a hosted Memory Unlocked service.
 ## Hermes native provider
 
 The package includes a generic, local Hermes plugin named `memory_fabric`.
-Install the optional Hermes dependency with `pip install memory-unlocked[hermes]`;
-it provides the plugin's `PyYAML` configuration loader.
+The `hermes` extra remains available as an alias for the core `PyYAML` dependency;
+`pip install memory-unlocked[hermes]` is therefore also supported.
 It is read-first: the provider binds its tenant/project from Hermes
 configuration, never accepts scope from a model tool call, and only writes a
 reviewable `candidate` when its explicit proposal tool receives `write: true`.
